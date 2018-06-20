@@ -19,12 +19,14 @@ library
   exposed-modules:     GoatGuardian
   build-depends:       base >= 4.7 && < 5
                      , bytestring
+                     , envy
                      , http-client
                      , http-conduit
                      , http-reverse-proxy
                      , mtl
                      , text
                      , tonatona
+                     , tonatona-logger
                      , wai
                      , wai-extra
                      , warp
