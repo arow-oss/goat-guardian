@@ -18,7 +18,12 @@ library
   hs-source-dirs:      src
   exposed-modules:     GoatGuardian
   build-depends:       base >= 4.7 && < 5
+                     , bytestring
+                     , http-client
+                     , http-conduit
+                     , http-reverse-proxy
                      , mtl
+                     , text
                      , tonatona
                      , wai
                      , wai-extra
