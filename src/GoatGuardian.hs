@@ -8,10 +8,20 @@ import Network.Wai.Handler.Warp
 defaultMain :: IO ()
 defaultMain = run 3000 app
 
+handleTwitterLogin :: Request -> IO WaiProxyResponse
+handleTwitterLogin = undefined
+
+handleProxy :: Request -> IO WaiProxyResponse
+handleProxy req =
+  pure $ WPRModifiedRequest req (ProxyDest "localhost" 8000)
+
 router :: Request -> IO WaiProxyResponse
 router req = do
-  -- TODO: Make sure the X-UserId header is pulled out of the incoming request.
-  pure $ WPRModifiedRequest req (ProxyDest "localhost" 8000)
+  -- TODO: Make sure the X-UserId header is removed from the incoming request.
+  let reqPath = pathInfo req
+  case reqPath of
+    "twitter":"login":_ -> handleTwitterLogin req
+    _ -> handleProxy req
 
 app :: Application
 app req respF = do
