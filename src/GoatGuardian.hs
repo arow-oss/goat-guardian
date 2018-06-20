@@ -57,6 +57,19 @@ defaultMain = run 3000 app
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin = undefined
 
+-- this example of using the oauthenticated library is from
+-- https://github.com/tel/oauthenticated/blob/master/examples/oauth-authenticate.hs
+-- main :: IO ()
+-- main = do
+--   Opts {..} <- parseArgs
+--   req <- Client.parseRequest oauthUrl
+--   rng <- Crypto.cprgCreate <$> Crypto.createEntropyPool
+--   manager <- Client.newManager Client.defaultManagerSettings
+--   let cred = OAuth.clientCred $ OAuth.Token oauthKey oauthSecret
+--       app = App manager OAuth.defaultServer cred
+--   _ :: Value <- fst <$> evalRWST (makeRequest =<< signRequest req) app rng
+-- 	pure ()
+
 handleProxy :: Request -> Tona WaiProxyResponse
 handleProxy req =
   pure $ WPRModifiedRequest req (ProxyDest "localhost" 8000)
