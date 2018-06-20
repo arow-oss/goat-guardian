@@ -1,4 +1,4 @@
-.PHONY: build clean dump-th ghci haddock haddock-server hlint lint repl test watch watch-haddock watch-tests watch-test
+.PHONY: build clean dump-th ghci ghcid haddock haddock-server hlint lint repl test watch watch-haddock watch-tests watch-test
 all: build
 
 build:
@@ -19,6 +19,9 @@ dump-th:
 ghci:
 	stack ghci
 
+ghcid:
+	ghcid -c 'stack ghci'
+
 heroku-release:
 	heroku container:push web
 
@@ -30,7 +33,7 @@ haddock:
 #
 # In order to run this, you need to have run `make build-haddock`.
 haddock-server:
-	cd "$$(stack path --local-doc-root)" && python -m http.server 8001
+	cd "$$(stack path --local-doc-root)" && python3 -m http.server 8001
 
 hlint: lint
 

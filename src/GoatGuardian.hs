@@ -52,7 +52,10 @@ instance TonaLoggerShared Shared where
 type Tona = TonaM Config Shared
 
 defaultMain :: IO ()
-defaultMain = run 3000 app
+defaultMain =
+  Tona.run $ do
+    (conf, shared) <- ask
+    liftIO $ run 3000 $ app conf shared
 
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin = undefined
@@ -82,20 +85,16 @@ router req = do
     "twitter":"login":_ -> handleTwitterLogin req
     _ -> handleProxy req
 
-app :: Application
-app req respF = do
+app :: Config -> Shared -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
+app conf shared req respF = do
   let waiProxySettings =
         defaultWaiProxySettings
           { wpsSetIpHeader = SIHFromHeader
           , wpsProcessBody = \_ _ -> Nothing
           }
-  Tona.run $ do
-    (conf, shared) <- ask
-    manager <- readerShared httpManager
-    liftIO $
-      waiProxyToSettings
-        (Tona.runWithConfAndShared conf shared . router)
-        waiProxySettings
-        manager
-        req
-        respF
+  waiProxyToSettings
+    (Tona.runWithConfAndShared conf shared . router)
+    waiProxySettings
+    (httpManager shared)
+    req
+    respF

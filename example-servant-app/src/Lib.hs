@@ -1,11 +1,23 @@
-module Lib
-    ( someFunc
-    ) where
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 
-import Database.Persist
-import Database.Persist.Postgresql
-import Database.Persist.TH
+module Lib where
+
 import Servant
+import Network.Wai.Handler.Warp
 
-someFunc :: IO ()
-someFunc = putStrLn "someFunc"
+type API =
+  "foo" :> Get '[JSON] Int
+
+server :: Server API
+server = getFoo
+
+getFoo :: Handler Int
+getFoo = pure 1
+
+app :: Application
+app = serve (Proxy @API) server
+
+defaultMain :: IO ()
+defaultMain = run 8000 app
