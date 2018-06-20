@@ -74,8 +74,12 @@ handleTwitterLogin = undefined
 -- 	pure ()
 
 handleProxy :: Request -> Tona WaiProxyResponse
-handleProxy req =
-  pure $ WPRModifiedRequest req (ProxyDest "localhost" 8000)
+handleProxy req = do
+  -- TODO: Check if the user is authenticated, and if so then add the X-UserId
+  -- header to the request.
+  let oldReqHeaders = requestHeaders req
+  let newReq = req { requestHeaders = ("X-UserId", "1") : oldReqHeaders }
+  pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
 
 router :: Request -> Tona WaiProxyResponse
 router req = do
