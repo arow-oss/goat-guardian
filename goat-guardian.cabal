@@ -2,7 +2,7 @@ name:                goat-guardian
 version:             0.1.0.0
 synopsis:            reverse proxy authentication server
 description:         Goat Guardian is a reverse proxy server (like nginx) that handles authentication for your app.
-homepage:            http://github.com/arow-oss/goat-guardian/#readme
+homepage:            http://github.com/arow-oss/goat-guardian
 license:             MIT
 license-file:        LICENSE
 author:              ARoW Co., Ltd.

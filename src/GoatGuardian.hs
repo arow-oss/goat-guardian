@@ -29,7 +29,6 @@ app req respF = do
   let waiProxySettings =
         defaultWaiProxySettings
           { wpsSetIpHeader = SIHFromHeader
-          -- TODO: Change this so that it removes the X-UserId header.
           , wpsProcessBody = \_ _ -> Nothing
           }
   waiProxyToSettings router waiProxySettings manager req respF
