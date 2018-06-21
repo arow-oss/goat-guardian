@@ -8,6 +8,7 @@
 
 module GoatGuardian where
 
+import Control.Monad (join)
 import Control.Monad.Catch (try)
 import Control.Monad.IO.Class
 import Control.Monad.Reader (ask)
@@ -16,14 +17,14 @@ import Data.Semigroup ((<>))
 import Data.Text (Text, pack)
 import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
-import Database.Persist ((==.), deleteWhere, insert_)
+import Database.Persist (Entity(..), (==.), deleteWhere, insert_, selectFirst)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, tlsManagerSettings)
 import qualified Network.HTTP.Conduit as HTTPClient
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hLocation)
 import Network.HTTP.Types.Status (status302)
-import Network.Wai (Request, Response, ResponseReceived, pathInfo, requestHeaders, responseLBS)
+import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import System.Envy
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
@@ -32,7 +33,7 @@ import Tonatona.Db.Sqlite (TonaDbConfig, TonaDbSqlShared)
 import qualified Tonatona.Db.Sqlite as TonaDb
 import Tonatona.Logger (TonaLoggerShared(..), logDebug, logInfo, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
-import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getTemporaryCredential)
+import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
 $(share
@@ -151,15 +152,41 @@ handleTwitterLogin req = do
           $(logDebug) "handleTwitterLogin, response from twitter didn't have oauth_callback_confirmed"
           undefined
 
-     -- cred <- OA.getTemporaryCredential tokens mgr
-     -- case lookup "oauth_token" $ unCredential cred of
-     --     Just temporaryToken -> do
-     --         liftIO $ storeCredential temporaryToken cred usersToken
-     --         let url = OA.authorizeUrl tokens cred
-     --         redirect $ LT.pack url
-     --     Nothing -> do
-     --         status HT.status500
-     --         text "Failed to obtain the temporary token."
+handleTwitterCallback :: Request -> Tona WaiProxyResponse
+handleTwitterCallback req = do
+  $(logDebug) $ "handleTwitterCallback, req: " <> tshow req
+  twitConf <- readerConf twitterConfig
+  let oauth =
+        twitterOAuth
+          { oauthConsumerKey = twitterOAuthKey twitConf
+          , oauthConsumerSecret = twitterOAuthSecret twitConf
+          , oauthCallback = Just $ twitterOAuthCallbackUrl twitConf
+          }
+  manager <- readerShared httpManager
+  let maybeParams = do
+        reqToken <- join $ lookup "oauth_token" (queryString req)
+        reqVerifier <- join $ lookup "oauth_verifier" (queryString req)
+        pure (reqToken, reqVerifier)
+  case maybeParams of
+    Nothing -> undefined
+    Just (reqToken, reqVerifier) -> do
+      maybeTempToken <-
+        TonaDb.run $
+          selectFirst
+            [TwitterTemporaryTokenToken ==. decodeUtf8With lenientDecode reqToken]
+            []
+      case maybeTempToken of
+        Nothing -> undefined
+        Just (Entity _ (TwitterTemporaryToken dbToken dbSecret)) -> do
+          let cred =
+                Credential
+                  [ ("oauth_token", encodeUtf8 dbToken)
+                  , ("oauth_token_secret", encodeUtf8 dbSecret)
+                  , ("oauth_verifier", reqVerifier)
+                  ]
+          accessTokens <- getAccessToken oauth cred manager
+          $(logDebug) $ "handleTwitterCallback, accessTokens: " <> tshow accessTokens
+          undefined
 
 handleProxy :: Request -> Tona WaiProxyResponse
 handleProxy req = do
@@ -174,6 +201,7 @@ router req = do
   -- TODO: Make sure the X-UserId header is removed from the incoming request.
   let reqPath = pathInfo req
   case reqPath of
+    "twitter":"callback":_ -> handleTwitterCallback req
     "twitter":"login":_ -> handleTwitterLogin req
     _ -> handleProxy req
 
