@@ -18,8 +18,10 @@ library
   hs-source-dirs:      src
   exposed-modules:     GoatGuardian
   build-depends:       base >= 4.7 && < 5
+                     , authenticate-oauth
                      , bytestring
                      , envy
+                     , exceptions
                      , http-client
                      , http-conduit
                      , http-reverse-proxy
