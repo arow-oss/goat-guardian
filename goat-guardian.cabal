@@ -25,9 +25,14 @@ library
                      , http-client
                      , http-conduit
                      , http-reverse-proxy
+                     , http-types
                      , mtl
+                     , persistent
+                     , persistent-sqlite
+                     , persistent-template
                      , text
                      , tonatona
+                     , tonatona-db-sqlite
                      , tonatona-logger
                      , twitter-conduit
                      , wai

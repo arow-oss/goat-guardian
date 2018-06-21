@@ -1,5 +1,10 @@
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module GoatGuardian where
 
@@ -9,18 +14,40 @@ import Control.Monad.Reader (ask)
 import Data.ByteString (ByteString)
 import Data.Semigroup ((<>))
 import Data.Text (Text, pack)
+import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
+import Data.Text.Encoding.Error (lenientDecode)
+import Database.Persist ((==.), deleteWhere, insert_)
+import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, tlsManagerSettings)
 import qualified Network.HTTP.Conduit as HTTPClient
 import Network.HTTP.ReverseProxy
-import Network.Wai (Request, Response, ResponseReceived, pathInfo, requestHeaders)
+import Network.HTTP.Types.Header (hLocation)
+import Network.HTTP.Types.Status (status302)
+import Network.Wai (Request, Response, ResponseReceived, pathInfo, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import System.Envy
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
+import Tonatona.Db.Sqlite (TonaDbConfig, TonaDbSqlShared)
+import qualified Tonatona.Db.Sqlite as TonaDb
 import Tonatona.Logger (TonaLoggerShared(..), logDebug, logInfo, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
-import Web.Authenticate.OAuth (getTemporaryCredential)
+import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getTemporaryCredential)
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
+
+$(share
+  [ mkPersist sqlSettings {mpsGenerateLenses = False}
+  , mkMigrate "migrateAll"
+  ]
+  [persistLowerCase|
+  TwitterTemporaryToken
+    token       Text
+    secret      Text
+
+    deriving Eq
+    deriving Show
+    |]
+ )
 
 data TwitterConfig = TwitterConfig
   { twitterOAuthCallbackUrl :: ByteString
@@ -36,23 +63,35 @@ instance FromEnv TwitterConfig where
       <*> env "GG_TWITTER_OAUTH_SECRET"
 
 data Config = Config
-  { twitterConfig :: TwitterConfig
+  { tonaDb :: TonaDb.Config
+  , twitterConfig :: TwitterConfig
   }
   deriving (Show)
 
 instance FromEnv Config where
-  fromEnv = Config <$> fromEnv
+  fromEnv =
+    Config
+      <$> fromEnv
+      <*> fromEnv
+
+instance TonaDbConfig Config where
+  config = tonaDb
 
 data Shared = Shared
-  { tonaLogger :: TonaLogger.Shared
-  , httpManager :: Manager
+  { httpManager :: Manager
+  , tonaDb :: TonaDb.Shared
+  , tonaLogger :: TonaLogger.Shared
   }
 
 instance Plug Config Shared where
   init conf = do
     Shared
-      <$> TonaLogger.init stdoutLogger
-      <*> newManager tlsManagerSettings
+      <$> newManager tlsManagerSettings
+      <*> TonaDb.init conf stdoutLogger
+      <*> TonaLogger.init stdoutLogger
+
+instance TonaDbSqlShared Shared where
+  shared = tonaDb
 
 instance TonaLoggerShared Shared where
   shared = tonaLogger
@@ -62,20 +101,12 @@ type Tona = TonaM Config Shared
 defaultMain :: IO ()
 defaultMain =
   Tona.run $ do
+    TonaDb.runMigrate migrateAll
     (conf, shared) <- ask
     liftIO $ run 3000 $ app conf shared
 
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin req = do
-  -- oauthUrlReq <- readerShared twitterOAuthUrlReq
-  -- TwitterConfig{twitterOAuthKey, twitterOAuthSecret} <- readerConf twitterConfig
-  -- let cred = clientCred $ Token twitterOAuthKey twitterOAuthSecret
-  -- oauthReq <- oauth cred defaultServer oauthUrlReq
-  -- putStrLn $ "oauth req: " <> show oauthReq
-  -- manager <- readerShared httpManager
-  -- res <- httpLbs oauthReq manager
-  -- putStrLn $ "oauth resp: " <> show res
-  -- undefined
   $(logDebug) $ "handleTwitterLogin, started..."
   twitConf <- readerConf twitterConfig
   let tokens =
@@ -95,12 +126,29 @@ handleTwitterLogin req = do
       let maybeCredRes = do
             confirmed <- lookup "oauth_callback_confirmed" creds
             token <- lookup "oauth_token" creds
-            secret <- lookup "oauth_secret" creds
+            secret <- lookup "oauth_token_secret" creds
             pure (confirmed, token, secret)
       case maybeCredRes of
-        Nothing -> undefined
+        Nothing -> do
+          $(logDebug) "handleTwitterLogin, couldn't fnid values"
+          undefined
         Just ("true", token, secret) -> do
+          $(logDebug) "handleTwitterLogin, successfully looked up values"
+          -- TODO: It might be possible just to encrypt these values
+          -- and return them to the user in a cookie that we can read
+          -- later.
+          TonaDb.run $ do
+            let textToken = decodeUtf8With lenientDecode token
+                textSecret = decodeUtf8With lenientDecode secret
+            deleteWhere [TwitterTemporaryTokenToken ==. textToken]
+            insert_ (TwitterTemporaryToken textToken textSecret)
+          let url = authorizeUrl tokens (Credential creds)
+          let bytestringUrl = encodeUtf8 $ pack url
+          $(logDebug) $ "handleTwitterLogin, url: " <> tshow url
+          let resp = responseLBS status302 [(hLocation, bytestringUrl)] mempty
+          pure $ WPRResponse resp
         _ -> do
+          $(logDebug) "handleTwitterLogin, response from twitter didn't have oauth_callback_confirmed"
           undefined
 
      -- cred <- OA.getTemporaryCredential tokens mgr

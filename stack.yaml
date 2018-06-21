@@ -43,6 +43,9 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps:
     - ../tonatona/tonatona
+    - ../tonatona/tonatona-db
+    - ../tonatona/tonatona-db-sql
+    - ../tonatona/tonatona-db-sqlite
     - ../tonatona/tonatona-logger
     # This is not included in lts-11.  However, the API has changed somewhat
     # from version 0.5, so we might as well use the newer version.
