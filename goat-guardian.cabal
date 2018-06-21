@@ -27,6 +27,7 @@ library
                      , text
                      , tonatona
                      , tonatona-logger
+                     , twitter-conduit
                      , wai
                      , wai-extra
                      , warp
