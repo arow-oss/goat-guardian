@@ -50,13 +50,8 @@ extra-deps:
     # This is not included in lts-11.  However, the API has changed somewhat
     # from version 0.5, so we might as well use the newer version.
     - http-reverse-proxy-0.6.0
-    # twitter-conduit would not compile with the latest version of
-    # http-conduit.  This has been fixed in the following PR.  The author of
-    # the twitter-conduit library says an updated of twitter-conduit will be
-    # released to hackage soon.
-    # https://github.com/himura/twitter-conduit/pull/59
-    - git: git@github.com:cdepillabout/twitter-conduit.git
-      commit: 798e90dd07aa8bb2
+    # The following twitter libraries are not available in Stackage.
+    - twitter-conduit-0.3.0
     - twitter-types-0.7.2.2
     - twitter-types-lens-0.7.2
 
