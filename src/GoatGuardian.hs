@@ -236,7 +236,7 @@ handleTwitterCallback req = do
                 token <- lookup "oauth_token" accessTokens
                 secret <- lookup "oauth_token_secret" accessTokens
                 userId <- lookup "user_id" accessTokens
-                screenName <- lookup "screenName" accessTokens
+                screenName <- lookup "screen_name" accessTokens
                 pure (token, secret, userId, screenName)
           case maybeAccessTokens of
             Nothing -> undefined
