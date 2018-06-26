@@ -10,14 +10,17 @@ module GoatGuardian where
 
 import Control.Monad (join)
 import Control.Monad.Catch (try)
-import Control.Monad.IO.Class
+import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask)
 import Data.ByteString (ByteString)
+import qualified Data.ByteString.Base64 as Base64
 import Data.Semigroup ((<>))
 import Data.Text (Text, pack)
 import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
-import Database.Persist (Entity(..), (==.), deleteWhere, insert_, selectFirst)
+import qualified Data.Text.IO as Text
+import Data.Time.Clock (UTCTime, getCurrentTime)
+import Database.Persist (Entity(..), (==.), deleteWhere, getBy, insert, insert_, selectFirst)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, tlsManagerSettings)
 import qualified Network.HTTP.Conduit as HTTPClient
@@ -31,10 +34,13 @@ import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import Tonatona.Db.Sqlite (TonaDbConfig, TonaDbSqlShared)
 import qualified Tonatona.Db.Sqlite as TonaDb
-import Tonatona.Logger (TonaLoggerShared(..), logDebug, logInfo, stdoutLogger)
+import Tonatona.Logger (TonaLoggerShared, logDebug, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
 import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
+import Web.ClientSession (randomKey)
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
+
+import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey, parseCmdLineOpts)
 
 $(share
   [ mkPersist sqlSettings {mpsGenerateLenses = False}
@@ -44,6 +50,24 @@ $(share
   TwitterTemporaryToken
     token       Text
     secret      Text
+
+    deriving Eq
+    deriving Show
+
+  TwitterUser
+    token         Text
+    secret        Text
+    twitterUserId Text
+    screenName    Text
+    userId        UserId
+
+    UniqueUserId twitterUserId
+
+    deriving Eq
+    deriving Show
+
+  User
+    created     UTCTime
 
     deriving Eq
     deriving Show
@@ -66,6 +90,7 @@ instance FromEnv TwitterConfig where
 data Config = Config
   { tonaDb :: TonaDb.Config
   , twitterConfig :: TwitterConfig
+  , rawSessionKey :: RawSessionKey
   }
   deriving (Show)
 
@@ -73,6 +98,7 @@ instance FromEnv Config where
   fromEnv =
     Config
       <$> fromEnv
+      <*> fromEnv
       <*> fromEnv
 
 instance TonaDbConfig Config where
@@ -99,12 +125,23 @@ instance TonaLoggerShared Shared where
 
 type Tona = TonaM Config Shared
 
+data GenerateSessionKey = GenerateSessionKey
+
 defaultMain :: IO ()
-defaultMain =
-  Tona.run $ do
-    TonaDb.runMigrate migrateAll
-    (conf, shared) <- ask
-    liftIO $ run 3000 $ app conf shared
+defaultMain = do
+  CmdLineOpts{genSessKey} <- parseCmdLineOpts
+  case genSessKey of
+    Just _ -> do
+      putStrLn "Generating a new session key that can be used with Goat Guardian."
+      putStrLn "Please set this key in the GG_SESSION_KEY environment variable and"
+      putStrLn "rerun Goat Guardian:\n"
+      (key, _) <- randomKey
+      Text.putStrLn $ decodeUtf8With lenientDecode $ Base64.encode key
+    Nothing ->
+      Tona.run $ do
+        TonaDb.runMigrate migrateAll
+        (conf, shared) <- ask
+        liftIO $ run 3000 $ app conf shared
 
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin req = do
@@ -184,9 +221,35 @@ handleTwitterCallback req = do
                   , ("oauth_token_secret", encodeUtf8 dbSecret)
                   , ("oauth_verifier", reqVerifier)
                   ]
-          accessTokens <- getAccessToken oauth cred manager
+          Credential accessTokens <- getAccessToken oauth cred manager
           $(logDebug) $ "handleTwitterCallback, accessTokens: " <> tshow accessTokens
-          undefined
+          let maybeAccessTokens = do
+                token <- lookup "oauth_token" accessTokens
+                secret <- lookup "oauth_token_secret" accessTokens
+                userId <- lookup "user_id" accessTokens
+                screenName <- lookup "screenName" accessTokens
+                pure (token, secret, userId, screenName)
+          case maybeAccessTokens of
+            Nothing -> undefined
+            Just (token, secret, twitterUserId, screenName) -> do
+              let tokenText = decodeUtf8With lenientDecode token
+                  secretText = decodeUtf8With lenientDecode secret
+                  twitterUserIdText = decodeUtf8With lenientDecode twitterUserId
+                  screenNameText = decodeUtf8With lenientDecode screenName
+              userId <-
+                TonaDb.run $ do
+                  maybeTwitterUser <- getBy $ UniqueUserId twitterUserIdText
+                  case maybeTwitterUser of
+                    -- This is the first time the twitter user has logged in.
+                    Nothing -> do
+                      time <- liftIO getCurrentTime
+                      userKey <- insert $ User time
+                      insert_ $
+                        TwitterUser tokenText secretText twitterUserIdText screenNameText userKey
+                      pure userKey
+                    Just (Entity _ TwitterUser{twitterUserUserId}) ->
+                      pure twitterUserUserId
+              undefined
 
 handleProxy :: Request -> Tona WaiProxyResponse
 handleProxy req = do
