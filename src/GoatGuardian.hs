@@ -15,10 +15,11 @@ import Control.Monad.Reader (ask)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import Data.ByteString.Lazy (toStrict)
-import Data.ByteString.Lazy.Builder (toLazyByteString)
+import Data.ByteString.Lazy.Builder (Builder, toLazyByteString)
+import Data.List (find)
 import Data.Semigroup ((<>))
-import Data.Text (Text, pack)
-import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
+import Data.Text (Text, pack, unpack)
+import Data.Text.Encoding (decodeUtf8', decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
@@ -27,11 +28,12 @@ import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowe
 import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, tlsManagerSettings)
 import qualified Network.HTTP.Conduit as HTTPClient
 import Network.HTTP.ReverseProxy
-import Network.HTTP.Types.Header (hLocation, hSetCookie)
+import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
 import Network.HTTP.Types.Status (status302)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import System.Envy
+import Text.Read (readMaybe)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import Tonatona.Db.Sqlite (TonaDbConfig, TonaDbSqlShared)
@@ -39,9 +41,9 @@ import qualified Tonatona.Db.Sqlite as TonaDb
 import Tonatona.Logger (TonaLoggerShared, logDebug, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
 import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
-import Web.ClientSession (encryptIO, randomKey)
+import Web.ClientSession (decrypt, encryptIO, randomKey)
 import qualified Web.ClientSession as ClientSession
-import Web.Cookie (SetCookie, defaultSetCookie, renderSetCookie, setCookieHttpOnly, setCookieMaxAge, setCookieName, setCookiePath, setCookieValue)
+import Web.Cookie (SetCookie, defaultSetCookie, parseCookies, renderCookies, renderSetCookie, setCookieHttpOnly, setCookieMaxAge, setCookieName, setCookiePath, setCookieValue)
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
 import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey(..), initRawSessKeyOrFail, parseCmdLineOpts)
@@ -273,7 +275,7 @@ handleTwitterCallback req = do
 createCookie :: Key User -> Tona ByteString
 createCookie userKey = do
   key <- readerShared sessionKey
-  let byteStringUserKey = encodeUtf8 $ tshow $ fromSqlKey userKey
+  let byteStringUserKey = userKeyToByteString userKey
   encryptedUserKey <- liftIO $ encryptIO key byteStringUserKey
   let setCookie =
         defaultSetCookie
@@ -283,17 +285,57 @@ createCookie userKey = do
           , setCookieMaxAge = Just $ 60 * 60 * 24 * 3650 -- 10 years
           , setCookieHttpOnly = True
           }
-      rawSetCookie = toStrict . toLazyByteString $ renderSetCookie setCookie
+      rawSetCookie = toStrictByteString $ renderSetCookie setCookie
   pure rawSetCookie
 
 
 handleProxy :: Request -> Tona WaiProxyResponse
 handleProxy req = do
-  -- TODO: Check if the user is authenticated, and if so then add the X-UserId
-  -- header to the request.
+  key <- readerShared sessionKey
   let oldReqHeaders = requestHeaders req
-  let newReq = req { requestHeaders = ("X-UserId", "1") : oldReqHeaders }
-  pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+      oldReqHeadersWithoutUserId = filter (\(header, _) -> header /= "X-UserId") oldReqHeaders
+      maybeRawCookies = find (\(header, _) -> header == hCookie) oldReqHeadersWithoutUserId
+      maybeCookies = parseCookies . snd <$> maybeRawCookies
+  case maybeCookies of
+    Nothing -> do
+      let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
+      pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+    Just cookies -> do
+      let maybeSessionCookie = find (\(name, _) -> name == "_GG_SESSION") cookies
+      case maybeSessionCookie of
+        Nothing -> do
+          let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
+          pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+        Just (_, sessionCookie) -> do
+          let maybeUserKey = do
+                rawUserKey <- decrypt key sessionCookie
+                textUserKey <- either (const Nothing) Just $ decodeUtf8' rawUserKey
+                readMaybe $ unpack textUserKey
+          case maybeUserKey of
+            Nothing -> do
+              let withoutSessionCookie = filter (\(name, _) -> name /= "_GG_SESSION") cookies
+                  oldReqHeadersWithoutCookie =
+                    filter (\(header, _) -> header /= hCookie) oldReqHeadersWithoutCookie
+                  newCookieHeader =
+                    (hCookie, toStrictByteString (renderCookies withoutSessionCookie))
+                  newHeaders = newCookieHeader : oldReqHeadersWithoutCookie
+                  newReq = req { requestHeaders = newHeaders }
+              pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+            Just userKey -> do
+              let withoutSessionCookie = filter (\(name, _) -> name /= "_GG_SESSION") cookies
+                  oldReqHeadersWithoutCookie =
+                    filter (\(header, _) -> header /= hCookie) oldReqHeadersWithoutCookie
+                  newCookieHeader =
+                    (hCookie, toStrictByteString (renderCookies withoutSessionCookie))
+                  newHeaders = ("X-UserId", userKeyToByteString userKey) : newCookieHeader : oldReqHeadersWithoutCookie
+                  newReq = req { requestHeaders = newHeaders }
+              pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+
+toStrictByteString :: Builder -> ByteString
+toStrictByteString = toStrict . toLazyByteString
+
+userKeyToByteString :: Key User -> ByteString
+userKeyToByteString = encodeUtf8 . tshow . fromSqlKey
 
 router :: Request -> Tona WaiProxyResponse
 router req = do
