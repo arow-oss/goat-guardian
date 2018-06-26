@@ -7,11 +7,28 @@ import Control.Monad.Except (throwError)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Base64 as Base64
-import Data.Semigroup ((<>))
+import Data.Semigroup (Semigroup, (<>))
+import Data.String (IsString)
 import Options.Applicative (Parser, (<**>), execParser, fullDesc, header, help, helper, info, long, short, switch)
 import System.Envy (FromEnv(..), env)
+import Web.ClientSession (Key, initKey)
 
 data RawSessionKey = RawSessionKey { unRawSessionKey :: ByteString }
+
+initRawSessKey :: RawSessionKey -> Either String Key
+initRawSessKey (RawSessionKey rawSessKey) = do
+  decodedSessKey <- Base64.decode rawSessKey
+  initKey decodedSessKey
+
+initRawSessKeyOrFail :: RawSessionKey -> IO Key
+initRawSessKeyOrFail rawSessKey = do
+  let msg = "Could not decode the GG_SESSION_KEY.\n\n" <> createNewKeyMsg
+  either (fail msg) pure (initRawSessKey rawSessKey)
+
+createNewKeyMsg :: (IsString s, Semigroup s) => s
+createNewKeyMsg =
+  "A new key can be created by running goat-guardian like the following:\n\n" <>
+  "  $ goat-guardian --generate-session-key"
 
 instance Show RawSessionKey where
   show _ = "(raw session key)"
@@ -20,9 +37,6 @@ instance FromEnv RawSessionKey where
   fromEnv = do
     b64SessKey <- env "GG_SESSION_KEY"
     let eitherB64SessKey = Base64.decode b64SessKey
-        createNewKeyMsg =
-          "A new key can be created by running goat-guardian like the following:\n\n" <>
-          "  $ goat-guardian --generate-session-key"
     case eitherB64SessKey of
       Left _ ->
         throwError $
