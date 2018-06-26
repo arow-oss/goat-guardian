@@ -17,8 +17,10 @@ cabal-version:       >=1.10
 library
   hs-source-dirs:      src
   exposed-modules:     GoatGuardian
+                     , GoatGuardian.CmdLineOpts
   build-depends:       base >= 4.7 && < 5
                      , authenticate-oauth
+                     , base64-bytestring
                      , bytestring
                      , envy
                      , exceptions
@@ -27,10 +29,12 @@ library
                      , http-reverse-proxy
                      , http-types
                      , mtl
+                     , optparse-applicative
                      , persistent
                      , persistent-sqlite
                      , persistent-template
                      , text
+                     , time
                      , tonatona
                      , tonatona-db-sqlite
                      , tonatona-logger
