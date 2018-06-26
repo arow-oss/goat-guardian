@@ -14,18 +14,20 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
+import Data.ByteString.Lazy (toStrict)
+import Data.ByteString.Lazy.Builder (toLazyByteString)
 import Data.Semigroup ((<>))
 import Data.Text (Text, pack)
 import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
-import Database.Persist (Entity(..), (==.), deleteWhere, getBy, insert, insert_, selectFirst)
+import Database.Persist.Sql (Entity(..), Key, (==.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, tlsManagerSettings)
 import qualified Network.HTTP.Conduit as HTTPClient
 import Network.HTTP.ReverseProxy
-import Network.HTTP.Types.Header (hLocation)
+import Network.HTTP.Types.Header (hLocation, hSetCookie)
 import Network.HTTP.Types.Status (status302)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
@@ -37,10 +39,12 @@ import qualified Tonatona.Db.Sqlite as TonaDb
 import Tonatona.Logger (TonaLoggerShared, logDebug, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
 import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
-import Web.ClientSession (randomKey)
+import Web.ClientSession (encryptIO, randomKey)
+import qualified Web.ClientSession as ClientSession
+import Web.Cookie (SetCookie, defaultSetCookie, renderSetCookie, setCookieHttpOnly, setCookieMaxAge, setCookieName, setCookiePath, setCookieValue)
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
-import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey, parseCmdLineOpts)
+import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey(..), initRawSessKeyOrFail, parseCmdLineOpts)
 
 $(share
   [ mkPersist sqlSettings {mpsGenerateLenses = False}
@@ -91,6 +95,7 @@ data Config = Config
   { tonaDb :: TonaDb.Config
   , twitterConfig :: TwitterConfig
   , rawSessionKey :: RawSessionKey
+  , redirAfterLoginUrl :: Text
   }
   deriving (Show)
 
@@ -100,6 +105,7 @@ instance FromEnv Config where
       <$> fromEnv
       <*> fromEnv
       <*> fromEnv
+      <*> envMaybe "GG_REDIR_AFTER_LOGIN_URL" .!= "http://localhost:3000"
 
 instance TonaDbConfig Config where
   config = tonaDb
@@ -108,14 +114,17 @@ data Shared = Shared
   { httpManager :: Manager
   , tonaDb :: TonaDb.Shared
   , tonaLogger :: TonaLogger.Shared
+  , sessionKey :: ClientSession.Key
   }
 
 instance Plug Config Shared where
   init conf = do
+    let rawSessKey = rawSessionKey conf
     Shared
       <$> newManager tlsManagerSettings
       <*> TonaDb.init conf stdoutLogger
       <*> TonaLogger.init stdoutLogger
+      <*> initRawSessKeyOrFail rawSessKey
 
 instance TonaDbSqlShared Shared where
   shared = tonaDb
@@ -247,9 +256,36 @@ handleTwitterCallback req = do
                       insert_ $
                         TwitterUser tokenText secretText twitterUserIdText screenNameText userKey
                       pure userKey
+                    -- The user has already logged in before and their information exists in the database.
                     Just (Entity _ TwitterUser{twitterUserUserId}) ->
+                      -- TODO: Should the user's oauth_token and oauth_token_secret be updated in the database?
                       pure twitterUserUserId
-              undefined
+              rawCookie <- createCookie userId
+              url <- readerConf redirAfterLoginUrl
+              let byteStringUrl = encodeUtf8 url
+                  resp =
+                    responseLBS
+                      status302
+                      [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
+                      mempty
+              pure $ WPRResponse resp
+
+createCookie :: Key User -> Tona ByteString
+createCookie userKey = do
+  key <- readerShared sessionKey
+  let byteStringUserKey = encodeUtf8 $ tshow $ fromSqlKey userKey
+  encryptedUserKey <- liftIO $ encryptIO key byteStringUserKey
+  let setCookie =
+        defaultSetCookie
+          { setCookieName = "_GG_SESSION"
+          , setCookieValue = encryptedUserKey
+          , setCookiePath = Just "/"
+          , setCookieMaxAge = Just $ 60 * 60 * 24 * 3650 -- 10 years
+          , setCookieHttpOnly = True
+          }
+      rawSetCookie = toStrict . toLazyByteString $ renderSetCookie setCookie
+  pure rawSetCookie
+
 
 handleProxy :: Request -> Tona WaiProxyResponse
 handleProxy req = do

@@ -23,6 +23,7 @@ library
                      , base64-bytestring
                      , bytestring
                      , clientsession
+                     , cookie
                      , envy
                      , exceptions
                      , http-client
