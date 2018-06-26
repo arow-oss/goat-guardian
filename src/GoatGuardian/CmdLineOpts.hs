@@ -1,4 +1,5 @@
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 
 module GoatGuardian.CmdLineOpts where
 
@@ -7,12 +8,7 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Base64 as Base64
 import Data.Semigroup ((<>))
-import Data.Text (Text, pack)
-import Data.Text.Encoding (decodeUtf8With, encodeUtf8)
-import Data.Text.Encoding.Error (lenientDecode)
-import qualified Data.Text.IO as Text
 import Options.Applicative (Parser, (<**>), execParser, fullDesc, header, help, helper, info, long, short, switch)
-import qualified Options.Applicative as OptParse
 import System.Envy (FromEnv(..), env)
 
 data RawSessionKey = RawSessionKey { unRawSessionKey :: ByteString }
@@ -28,7 +24,7 @@ instance FromEnv RawSessionKey where
           "A new key can be created by running goat-guardian like the following:\n\n" <>
           "  $ goat-guardian --generate-session-key"
     case eitherB64SessKey of
-      Left err ->
+      Left _ ->
         throwError $
           "Could not base64-decode the GG_SESSION_KEY.\n\n" <> createNewKeyMsg
       Right sessKey -> do
