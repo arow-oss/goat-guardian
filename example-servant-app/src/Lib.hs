@@ -9,6 +9,8 @@
 
 module Lib where
 
+import Prelude hiding (head)
+
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Logger (runNoLoggingT)
 import Data.Proxy (Proxy(Proxy))
@@ -16,9 +18,11 @@ import Data.Text (Text)
 import Database.Persist.Sqlite (SqlBackend, withSqliteConn)
 import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSettings)
 import Network.Wai.Handler.Warp (run)
+import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Servant (Application, Get, Handler, Header', Required, Server, Strict, (:>), (:<|>)((:<|>)), serve)
 import Servant.HTML.Blaze (HTML)
-import Text.Blaze.Html (Html)
+import Text.Blaze.Html5 (Html, (!), a, body, head, html, p, title)
+import Text.Blaze.Html5.Attributes (href)
 
 import Types (UserId(UserId))
 
@@ -44,7 +48,13 @@ server :: SqlBackend -> Server API
 server sqlBackend = homePage :<|> afterLogin sqlBackend
 
 homePage :: Handler Html
-homePage = undefined
+homePage = do
+  pure $
+    html $ do
+      head $ title "Example Servant App"
+      body $
+        p $
+          a ! href "http://localhost:3000/twitter/login" $ "login with twitter"
 
 afterLogin :: SqlBackend -> UserId -> Handler Html
 afterLogin sqlBackend userId = undefined
@@ -56,4 +66,4 @@ defaultMain :: IO ()
 defaultMain =
   runNoLoggingT $
     withSqliteConn "example-servant-app.sqlite3" $ \sqlBackend ->
-      liftIO (run 8000 (app sqlBackend))
+      liftIO . run 8000 . logStdoutDev $ app sqlBackend

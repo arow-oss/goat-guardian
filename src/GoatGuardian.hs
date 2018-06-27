@@ -32,6 +32,7 @@ import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
 import Network.HTTP.Types.Status (status302)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
+import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import System.Envy
 import Text.Read (readMaybe)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
@@ -152,7 +153,7 @@ defaultMain = do
       Tona.run $ do
         TonaDb.runMigrate migrateAll
         (conf, shared) <- ask
-        liftIO $ run 3000 $ app conf shared
+        liftIO . run 3000 . logStdoutDev $ app conf shared
 
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin req = do
