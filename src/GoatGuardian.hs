@@ -23,7 +23,7 @@ import Data.Text.Encoding (decodeUtf8', decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
-import Database.Persist.Sql (Entity(..), Key, (==.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst)
+import Database.Persist.Sql (Entity(..), Key, (==.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst, toSqlKey)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, tlsManagerSettings)
 import qualified Network.HTTP.Conduit as HTTPClient
@@ -296,21 +296,27 @@ handleProxy req = do
       oldReqHeadersWithoutUserId = filter (\(header, _) -> header /= "X-UserId") oldReqHeaders
       maybeRawCookies = find (\(header, _) -> header == hCookie) oldReqHeadersWithoutUserId
       maybeCookies = parseCookies . snd <$> maybeRawCookies
+  $(logDebug) $ "handleProxy, maybeCookies: " <> tshow maybeCookies
   case maybeCookies of
     Nothing -> do
       let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
       pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
     Just cookies -> do
       let maybeSessionCookie = find (\(name, _) -> name == "_GG_SESSION") cookies
+      $(logDebug) $ "handleProxy, maybeSessionCookie: " <> tshow maybeSessionCookie
       case maybeSessionCookie of
         Nothing -> do
           let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
           pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
         Just (_, sessionCookie) -> do
+          $(logDebug) $ "handleProxy, sessionCookie: " <> tshow sessionCookie
+          $(logDebug) $ "handleProxy, rawUserKey: " <> tshow (decrypt key sessionCookie)
           let maybeUserKey = do
                 rawUserKey <- decrypt key sessionCookie
                 textUserKey <- either (const Nothing) Just $ decodeUtf8' rawUserKey
-                readMaybe $ unpack textUserKey
+                int64UserKey <- readMaybe $ unpack textUserKey
+                pure $ toSqlKey int64UserKey
+          $(logDebug) $ "handleProxy, maybeUserKey: " <> tshow maybeUserKey
           case maybeUserKey of
             Nothing -> do
               let withoutSessionCookie = filter (\(name, _) -> name /= "_GG_SESSION") cookies
@@ -322,13 +328,30 @@ handleProxy req = do
                   newReq = req { requestHeaders = newHeaders }
               pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
             Just userKey -> do
-              let withoutSessionCookie = filter (\(name, _) -> name /= "_GG_SESSION") cookies
+              let withoutSessionCookie =
+                    filter (\(name, _) -> name /= "_GG_SESSION") cookies
                   oldReqHeadersWithoutCookie =
-                    filter (\(header, _) -> header /= hCookie) oldReqHeadersWithoutCookie
+                    filter
+                      (\(header, _) -> header /= hCookie)
+                      oldReqHeadersWithoutUserId
                   newCookieHeader =
-                    (hCookie, toStrictByteString (renderCookies withoutSessionCookie))
-                  newHeaders = ("X-UserId", userKeyToByteString userKey) : newCookieHeader : oldReqHeadersWithoutCookie
+                    case withoutSessionCookie of
+                      [] -> []
+                      (_:_) ->
+                        [ (hCookie
+                          , toStrictByteString (renderCookies withoutSessionCookie)
+                          )
+                        ]
+                  newHeaders =
+                    [("X-UserId", userKeyToByteString userKey)] <>
+                    newCookieHeader <>
+                    oldReqHeadersWithoutCookie
                   newReq = req { requestHeaders = newHeaders }
+              $(logDebug) $ "handleProxy, userKey: " <> tshow userKey
+              $(logDebug) $ "handleProxy, oldReqHeadersWithoutCookie: " <> tshow oldReqHeadersWithoutCookie
+              $(logDebug) $ "handleProxy, newCookieHeader: " <> tshow newCookieHeader
+              $(logDebug) $ "handleProxy, nweHeaders: " <> tshow newHeaders
+              $(logDebug) $ "handleProxy, newReq: " <> tshow newReq
               pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
 
 toStrictByteString :: Builder -> ByteString
