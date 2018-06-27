@@ -24,6 +24,7 @@ library
                      , http-client
                      , http-conduit
                      , http-reverse-proxy
+                     , http-types
                      , persistent
                      , persistent-sqlite
                      , persistent-template
