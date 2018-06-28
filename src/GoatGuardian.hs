@@ -29,7 +29,7 @@ import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, t
 import qualified Network.HTTP.Conduit as HTTPClient
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
-import Network.HTTP.Types.Status (status302, status404, status500)
+import Network.HTTP.Types.Status (status302, status403, status404, status500)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -233,12 +233,22 @@ handleTwitterCallback req = do
         pure (reqToken, reqVerifier)
   case maybeParams of
     Nothing -> do
-      let resp =
-            responseLBS
-              status500
-              []
-              "<p>callback response from twitter didn't have oauth_token or oauth_verifier</p>"
-      pure $ WPRResponse resp
+      let deniedParam = join $ lookup "denied" (queryString req)
+      case deniedParam of
+        Nothing -> do
+          let resp =
+                responseLBS
+                  status500
+                  []
+                  "<p>callback response from twitter didn't have oauth_token or oauth_verifier or denied</p>"
+          pure $ WPRResponse resp
+        Just _ -> do
+          let resp =
+                responseLBS
+                  status403
+                  []
+                  "<p>call response from twitter was denied</p>"
+          pure $ WPRResponse resp
     Just (reqToken, reqVerifier) -> do
       maybeTempToken <-
         TonaDb.run $
