@@ -29,7 +29,7 @@ import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, t
 import qualified Network.HTTP.Conduit as HTTPClient
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
-import Network.HTTP.Types.Status (status302, status500)
+import Network.HTTP.Types.Status (status302, status404, status500)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -232,7 +232,13 @@ handleTwitterCallback req = do
         reqVerifier <- join $ lookup "oauth_verifier" (queryString req)
         pure (reqToken, reqVerifier)
   case maybeParams of
-    Nothing -> undefined
+    Nothing -> do
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>callback response from twitter didn't have oauth_token or oauth_verifier</p>"
+      pure $ WPRResponse resp
     Just (reqToken, reqVerifier) -> do
       maybeTempToken <-
         TonaDb.run $
@@ -240,7 +246,13 @@ handleTwitterCallback req = do
             [TwitterTemporaryTokenToken ==. decodeUtf8With lenientDecode reqToken]
             []
       case maybeTempToken of
-        Nothing -> undefined
+        Nothing -> do
+          let resp =
+                responseLBS
+                  status404
+                  []
+                  "<p>in twitter callback, tempory token for user not found in database</p>"
+          pure $ WPRResponse resp
         Just (Entity _ (TwitterTemporaryToken dbToken dbSecret)) -> do
           let cred =
                 Credential
@@ -257,7 +269,13 @@ handleTwitterCallback req = do
                 screenName <- lookup "screen_name" accessTokens
                 pure (token, secret, userId, screenName)
           case maybeAccessTokens of
-            Nothing -> undefined
+            Nothing -> do
+              let resp =
+                    responseLBS
+                      status404
+                      []
+                      "<p>in twitter callback, access tokens not found in getAccessToken call</p>"
+              pure $ WPRResponse resp
             Just (token, secret, twitterUserId, screenName) -> do
               let tokenText = decodeUtf8With lenientDecode token
                   secretText = decodeUtf8With lenientDecode secret
