@@ -29,7 +29,7 @@ import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, t
 import qualified Network.HTTP.Conduit as HTTPClient
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
-import Network.HTTP.Types.Status (status302)
+import Network.HTTP.Types.Status (status302, status500)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -171,7 +171,12 @@ handleTwitterLogin req = do
   $(logDebug) $ "handleTwitterLogin, eitherCred: " <> tshow eitherCred
   case eitherCred of
     Left (err :: HttpException) -> do
-      undefined
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>could not access Twitter to get temporary credentials</p>"
+      pure $ WPRResponse resp
     Right (Credential creds) -> do
       let maybeCredRes = do
             confirmed <- lookup "oauth_callback_confirmed" creds
@@ -180,8 +185,13 @@ handleTwitterLogin req = do
             pure (confirmed, token, secret)
       case maybeCredRes of
         Nothing -> do
-          $(logDebug) "handleTwitterLogin, couldn't fnid values"
-          undefined
+          $(logDebug) "handleTwitterLogin, couldn't find values"
+          let resp =
+                responseLBS
+                  status500
+                  []
+                  "<p>could not find Twitter oauth_* values in temporary credential call</p>"
+          pure $ WPRResponse resp
         Just ("true", token, secret) -> do
           $(logDebug) "handleTwitterLogin, successfully looked up values"
           -- TODO: It might be possible just to encrypt these values
@@ -199,7 +209,12 @@ handleTwitterLogin req = do
           pure $ WPRResponse resp
         _ -> do
           $(logDebug) "handleTwitterLogin, response from twitter didn't have oauth_callback_confirmed"
-          undefined
+          let resp =
+                responseLBS
+                  status500
+                  []
+                  "<p>response from twitter didn't have oauth_callback_confirmed set to true</p>"
+          pure $ WPRResponse resp
 
 handleTwitterCallback :: Request -> Tona WaiProxyResponse
 handleTwitterCallback req = do
