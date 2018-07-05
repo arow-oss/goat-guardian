@@ -35,11 +35,14 @@ import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Network.Wai.Parse
 import System.Envy
+import Text.Email.Validate (isValid)
 import Text.Read (readMaybe)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import Tonatona.Db.Sqlite (TonaDbConfig, TonaDbSqlShared)
 import qualified Tonatona.Db.Sqlite as TonaDb
+import Tonatona.Email.Sendmail (TonaEmailShared, simpleMail')
+import qualified Tonatona.Email.Sendmail as TonaEmail
 import Tonatona.Logger (TonaLoggerShared, logDebug, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
 import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
@@ -49,12 +52,33 @@ import Web.Cookie (SetCookie, defaultSetCookie, parseCookies, renderCookies, ren
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
 import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey(..), initRawSessKeyOrFail, parseCmdLineOpts)
+import GoatGuardian.Password (checkPass, hashPass)
+import GoatGuardian.Types (LoginToken(..))
 
 $(share
   [ mkPersist sqlSettings {mpsGenerateLenses = False}
   , mkMigrate "migrateAll"
   ]
   [persistLowerCase|
+  Email
+    email             Text
+    hashedPass        Text
+    verified          Bool
+    userId            UserId
+
+    UniqueEmail email
+
+    deriving Eq
+    deriving Show
+
+  EmailLoginToken
+    email      EmailId
+    loginToken LoginToken
+    created    UTCTime
+
+    deriving Eq
+    deriving Show
+
   TwitterTemporaryToken
     token       Text
     secret      Text
@@ -407,7 +431,47 @@ handleEmailRegister req = do
   let reqBodyOpts =
         setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
-  undefined
+  let maybeEmail = find (\(param, _) -> param == "email") params
+      maybePass = find (\(param, _) -> param == "password") params
+  case maybeEmail of
+    Nothing -> undefined
+    Just email ->
+      case maybePass of
+        Nothing -> undefined
+        Just pass ->
+          if not (isValid email)
+            then undefined
+            else do
+              hashedPass <- hashPass pass
+              time <- liftIO getCurrentTime
+              mabyeLoginToken <- TonaDb.run $ do
+                maybeEmailEntity <- getBy $ UniqueEmail email
+                case maybeEmailEntity of
+                  Just emailEntity -> pure Nothing
+                  Nothing -> do
+                    userKey <- insert $ User time
+                    emailKey <- insert $ Email email hashedPass False userKey
+                    loginToken <- createLoginToken
+                    emailLoginTokenKey <-
+                      insert $ EmailLoginToken emailKey loginToken time
+                    pure $ Just loginToken
+              case maybeLoginToken of
+                Nothing -> undefined
+                Just (LoginToken loginToken) -> do
+                  let mail =
+                        simpleMail'
+                          email
+                          "foobar@example.com"
+                          "Confirm your email address"
+                          ("http://localhost:3000/email/confirm?token=" <> loginToken)
+                  TonaEmail.send mail
+                  let resp =
+                        responseLBS
+                          status302
+                          [(hLocation, "http://localhost:3000/")]
+                          mempty
+                  pure $ WPRResponse resp
+
 
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString

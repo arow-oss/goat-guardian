@@ -18,14 +18,18 @@ library
   hs-source-dirs:      src
   exposed-modules:     GoatGuardian
                      , GoatGuardian.CmdLineOpts
+                     , GoatGuardian.Password
+                     , GoatGuardian.Types
   build-depends:       base >= 4.7 && < 5
                      , authenticate-oauth
                      , base64-bytestring
                      , bytestring
                      , clientsession
                      , cookie
+                     , email-validate
                      , envy
                      , exceptions
+                     , http-api-data
                      , http-client
                      , http-conduit
                      , http-reverse-proxy
@@ -35,6 +39,8 @@ library
                      , persistent
                      , persistent-sqlite
                      , persistent-template
+                     , random
+                     , scrypt
                      , text
                      , time
                      , tonatona
