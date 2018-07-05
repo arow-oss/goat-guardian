@@ -46,8 +46,10 @@ extra-deps:
     - ../tonatona/tonatona-db
     - ../tonatona/tonatona-db-sql
     - ../tonatona/tonatona-db-sqlite
+    - ../tonatona/tonatona-email
+    - ../tonatona/tonatona-email-sendmail
     - ../tonatona/tonatona-logger
-    # This is not included in lts-11.  However, the API has changed somewhat
+    # Version 0.6.0 is not included in lts-11.  However, the API has changed somewhat
     # from version 0.5, so we might as well use the newer version.
     - http-reverse-proxy-0.6.0
     # The following twitter libraries are not available in Stackage.

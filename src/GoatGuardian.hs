@@ -33,6 +33,7 @@ import Network.HTTP.Types.Status (status302, status403, status404, status500)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
+import Network.Wai.Parse
 import System.Envy
 import Text.Read (readMaybe)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
@@ -398,6 +399,16 @@ handleProxy req = do
               $(logDebug) $ "handleProxy, newReq: " <> tshow newReq
               pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
 
+noUploadedFilesBackend :: Applicative m => a -> b -> m c -> m ()
+noUploadedFilesBackend _ _ _ = pure ()
+
+handleEmailRegister :: Request -> Tona WaiProxyResponse
+handleEmailRegister req = do
+  let reqBodyOpts =
+        setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
+  (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
+  undefined
+
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
 
@@ -406,11 +417,11 @@ userKeyToByteString = encodeUtf8 . tshow . fromSqlKey
 
 router :: Request -> Tona WaiProxyResponse
 router req = do
-  -- TODO: Make sure the X-UserId header is removed from the incoming request.
   let reqPath = pathInfo req
   case reqPath of
     "twitter":"callback":_ -> handleTwitterCallback req
     "twitter":"login":_ -> handleTwitterLogin req
+    "email":"register":_ -> handleEmailRegister req
     _ -> handleProxy req
 
 app :: Config -> Shared -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived

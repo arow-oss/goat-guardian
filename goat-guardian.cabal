@@ -39,6 +39,7 @@ library
                      , time
                      , tonatona
                      , tonatona-db-sqlite
+                     , tonatona-email-sendmail
                      , tonatona-logger
                      , twitter-conduit
                      , wai
