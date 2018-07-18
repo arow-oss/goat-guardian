@@ -42,12 +42,15 @@ packages:
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
-    - ../tonatona/tonatona
-    - ../tonatona/tonatona-db
-    - ../tonatona/tonatona-db-sql
-    - ../tonatona/tonatona-db-sqlite
-    - ../tonatona/tonatona-email-sendmail
-    - ../tonatona/tonatona-logger
+    - git: git@github.com:arow-oss/tonatona
+      commit: ccd098cad4e6d9b4a1a1f50fba14feed5cae0dc5
+      subdirs:
+        - tonatona
+        - tonatona-db
+        - tonatona-db-sql
+        - tonatona-db-sqlite
+        - tonatona-email-sendmail
+        - tonatona-logger
     # Version 0.6.0 is not included in lts-11.  However, the API has changed somewhat
     # from version 0.5, so we might as well use the newer version.
     - http-reverse-proxy-0.6.0
