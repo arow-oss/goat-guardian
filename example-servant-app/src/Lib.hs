@@ -9,6 +9,8 @@
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+
 module Lib where
 
 import Prelude hiding (head)
@@ -27,14 +29,13 @@ import Database.Persist.TH (mkMigrate, mkPersist, persistLowerCase, share, sqlSe
 import Network.HTTP.Types.Header (hLocation)
 import Network.Wai.Handler.Warp (run)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
-import Servant (Application, Accept, Get, FormUrlEncoded, Handler, Header', MimeRender(mimeRender), Optional, Post, ReqBody, Required, Server, Strict, (:>), (:<|>)((:<|>)), err302, errHeaders, serve)
-import Servant.API.ContentTypes (AllCTRender(..))
+import Servant (Application, Get, FormUrlEncoded, Handler, Header', Optional, Post, ReqBody, Required, Server, Strict, (:>), (:<|>)((:<|>)), err302, errHeaders, serve)
 import Servant.HTML.Blaze (HTML)
 import Text.Blaze.Html5 (Html, ToMarkup(toMarkup), (!), a, body, form, h1, h3, head, html, input, li, p, title, toHtml, ul)
 import Text.Blaze.Html5.Attributes (href, method, name, type_, value)
 import Web.FormUrlEncoded (Form, FromForm(fromForm), lookupUnique)
 
-import Types (UserId(UserId, unUserId))
+import Types (UserId(unUserId))
 
 $(share
   [mkPersist sqlSettings , mkMigrate "migrateAll"]
@@ -55,11 +56,7 @@ newtype PostContents = PostContents { unPostContents :: Text } deriving (Eq, Sho
 
 instance FromForm PostContents where
   fromForm :: Form -> Either Text PostContents
-  fromForm form = PostContents <$> lookupUnique "contents" form
-
--- instance Accept a => MimeRender a Void where
---   mimeRender _ void = absurd void
---
+  fromForm frm = PostContents <$> lookupUnique "contents" frm
 
 instance ToMarkup Void where
   toMarkup void = absurd void
