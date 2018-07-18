@@ -23,7 +23,7 @@ import Data.Text.Encoding.Error (lenientDecode)
 import Data.Text.Lazy (fromStrict)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
-import Database.Persist.Sql (Entity(..), Key, (==.), (=.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst, toSqlKey, update)
+import Database.Persist.Sql (Entity(..), Key, (==.), (=.), deleteWhere, fromSqlKey, getBy, getEntity, insert, insert_, selectFirst, toSqlKey, update)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
@@ -51,7 +51,7 @@ import Web.Cookie (defaultSetCookie, parseCookies, renderCookies, renderSetCooki
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
 import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey(..), initRawSessKeyOrFail, parseCmdLineOpts)
-import GoatGuardian.Password (hashPass)
+import GoatGuardian.Password (checkPass, hashPass)
 import GoatGuardian.Types (LoginToken(..), createLoginToken)
 
 $(share
@@ -512,7 +512,31 @@ handleEmailLogin req = do
       let email = decodeUtf8With lenientDecode byteStringEmail
       case maybePass of
         Nothing -> undefined
-        Just pass -> TODO
+        Just byteStringPass -> do
+          let pass = decodeUtf8With lenientDecode byteStringPass
+          maybeEmailEnt <- TonaDb.run $ getBy $ UniqueEmail email
+          case maybeEmailEnt of
+            Nothing -> undefined
+            Just (Entity _ Email{emailHashedPass, emailVerified, emailUserId}) -> do
+              if not emailVerified
+                then undefined
+                else do
+                  if not (checkPass pass emailHashedPass)
+                    then undefined
+                    else do
+                      maybeUserEnt <- TonaDb.run $ getEntity emailUserId
+                      case maybeUserEnt of
+                        Nothing -> undefined
+                        Just (Entity userKey _) -> do
+                          rawCookie <- createCookie userKey
+                          url <- readerConf redirAfterLoginUrl
+                          let byteStringUrl = encodeUtf8 url
+                              resp =
+                                responseLBS
+                                  status302
+                                  [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
+                                  mempty
+                          pure $ WPRResponse resp
 
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
