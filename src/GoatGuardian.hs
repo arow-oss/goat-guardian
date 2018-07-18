@@ -499,6 +499,20 @@ handleEmailConfirm req = do
                   mempty
           pure $ WPRResponse resp
 
+handleEmailLogin :: Request -> Tona WaiProxyResponse
+handleEmailLogin req = do
+  let reqBodyOpts =
+        setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
+  (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
+  let maybeEmail = lookup "email" params
+      maybePass = lookup "password" params
+  case maybeEmail of
+    Nothing -> undefined
+    Just byteStringEmail -> do
+      let email = decodeUtf8With lenientDecode byteStringEmail
+      case maybePass of
+        Nothing -> undefined
+        Just pass -> TODO
 
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
@@ -514,6 +528,7 @@ router req = do
     "twitter":"login":_ -> handleTwitterLogin req
     "email":"register":_ -> handleEmailRegister req
     "email":"confirm":_ -> handleEmailConfirm req
+    "email":"login":_ -> handleEmailLogin req
     _ -> handleProxy req
 
 app :: Config -> Shared -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
