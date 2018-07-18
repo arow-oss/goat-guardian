@@ -26,8 +26,7 @@ import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
 import Database.Persist.Sql (Entity(..), Key, (==.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst, toSqlKey)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
-import Network.HTTP.Conduit (HttpException, Manager, parseRequest, newManager, tlsManagerSettings)
-import qualified Network.HTTP.Conduit as HTTPClient
+import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
 import Network.HTTP.Types.Status (status302, status403, status404, status500)
@@ -49,11 +48,11 @@ import qualified Tonatona.Logger as TonaLogger
 import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
 import Web.ClientSession (decrypt, encryptIO, randomKey)
 import qualified Web.ClientSession as ClientSession
-import Web.Cookie (SetCookie, defaultSetCookie, parseCookies, renderCookies, renderSetCookie, setCookieHttpOnly, setCookieMaxAge, setCookieName, setCookiePath, setCookieValue)
+import Web.Cookie (defaultSetCookie, parseCookies, renderCookies, renderSetCookie, setCookieHttpOnly, setCookieMaxAge, setCookieName, setCookiePath, setCookieValue)
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
 import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey(..), initRawSessKeyOrFail, parseCmdLineOpts)
-import GoatGuardian.Password (checkPass, hashPass)
+import GoatGuardian.Password (hashPass)
 import GoatGuardian.Types (LoginToken(..), createLoginToken)
 
 $(share
@@ -182,7 +181,7 @@ defaultMain = do
         liftIO . run 3000 . logStdoutDev $ app conf shared
 
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
-handleTwitterLogin req = do
+handleTwitterLogin _req = do
   $(logDebug) $ "handleTwitterLogin, started..."
   twitConf <- readerConf twitterConfig
   let tokens =
@@ -196,7 +195,7 @@ handleTwitterLogin req = do
   eitherCred <- try $ getTemporaryCredential tokens manager
   $(logDebug) $ "handleTwitterLogin, eitherCred: " <> tshow eitherCred
   case eitherCred of
-    Left (err :: HttpException) -> do
+    Left (_err :: HttpException) -> do
       let resp =
             responseLBS
               status500
@@ -450,11 +449,11 @@ handleEmailRegister req = do
               maybeLoginToken <- TonaDb.run $ do
                 maybeEmailEntity <- getBy $ UniqueEmail email
                 case maybeEmailEntity of
-                  Just emailEntity -> pure Nothing
+                  Just _emailEntity -> pure Nothing
                   Nothing -> do
                     userKey <- insert $ User time
                     emailKey <- insert $ Email email hashedPass False userKey
-                    emailLoginTokenKey <-
+                    _emailLoginTokenKey <-
                       insert $ EmailLoginToken emailKey token time
                     pure $ Just token
               case maybeLoginToken of
