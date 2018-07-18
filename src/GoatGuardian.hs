@@ -21,6 +21,7 @@ import Data.Semigroup ((<>))
 import Data.Text (Text, pack, unpack)
 import Data.Text.Encoding (decodeUtf8', decodeUtf8With, encodeUtf8)
 import Data.Text.Encoding.Error (lenientDecode)
+import Data.Text.Lazy (fromStrict)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
 import Database.Persist.Sql (Entity(..), Key, (==.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst, toSqlKey)
@@ -41,7 +42,7 @@ import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import Tonatona.Db.Sqlite (TonaDbConfig, TonaDbSqlShared)
 import qualified Tonatona.Db.Sqlite as TonaDb
-import Tonatona.Email.Sendmail (TonaEmailShared, simpleMail')
+import Tonatona.Email.Sendmail (Address(Address), simpleMail')
 import qualified Tonatona.Email.Sendmail as TonaEmail
 import Tonatona.Logger (TonaLoggerShared, logDebug, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
@@ -53,7 +54,7 @@ import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
 import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey(..), initRawSessKeyOrFail, parseCmdLineOpts)
 import GoatGuardian.Password (checkPass, hashPass)
-import GoatGuardian.Types (LoginToken(..))
+import GoatGuardian.Types (LoginToken(..), createLoginToken)
 
 $(share
   [ mkPersist sqlSettings {mpsGenerateLenses = False}
@@ -435,35 +436,36 @@ handleEmailRegister req = do
       maybePass = find (\(param, _) -> param == "password") params
   case maybeEmail of
     Nothing -> undefined
-    Just email ->
+    Just (_, byteStringEmail) -> do
+      let email = decodeUtf8With lenientDecode byteStringEmail
       case maybePass of
         Nothing -> undefined
-        Just pass ->
-          if not (isValid email)
+        Just (_, pass) ->
+          if not (isValid byteStringEmail)
             then undefined
             else do
-              hashedPass <- hashPass pass
+              hashedPass <- hashPass (decodeUtf8With lenientDecode pass)
               time <- liftIO getCurrentTime
-              mabyeLoginToken <- TonaDb.run $ do
+              token <- createLoginToken
+              maybeLoginToken <- TonaDb.run $ do
                 maybeEmailEntity <- getBy $ UniqueEmail email
                 case maybeEmailEntity of
                   Just emailEntity -> pure Nothing
                   Nothing -> do
                     userKey <- insert $ User time
                     emailKey <- insert $ Email email hashedPass False userKey
-                    loginToken <- createLoginToken
                     emailLoginTokenKey <-
-                      insert $ EmailLoginToken emailKey loginToken time
-                    pure $ Just loginToken
+                      insert $ EmailLoginToken emailKey token time
+                    pure $ Just token
               case maybeLoginToken of
                 Nothing -> undefined
                 Just (LoginToken loginToken) -> do
                   let mail =
                         simpleMail'
-                          email
+                          (Address Nothing email)
                           "foobar@example.com"
                           "Confirm your email address"
-                          ("http://localhost:3000/email/confirm?token=" <> loginToken)
+                          (fromStrict $ "http://localhost:3000/email/confirm?token=" <> loginToken)
                   TonaEmail.send mail
                   let resp =
                         responseLBS
