@@ -424,7 +424,7 @@ handleProxy req = do
               $(logDebug) $ "handleProxy, newReq: " <> tshow newReq
               pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
 
-noUploadedFilesBackend :: Applicative m => a -> b -> m c -> m ()
+noUploadedFilesBackend :: Applicative m => a -> b -> n c -> m ()
 noUploadedFilesBackend _ _ _ = pure ()
 
 handleEmailRegister :: Request -> Tona WaiProxyResponse
