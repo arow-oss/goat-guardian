@@ -16,7 +16,6 @@ import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import Data.ByteString.Lazy (toStrict)
 import Data.ByteString.Lazy.Builder (Builder, toLazyByteString)
-import Data.List (find)
 import Data.Semigroup ((<>))
 import Data.Text (Text, pack, unpack)
 import Data.Text.Encoding (decodeUtf8', decodeUtf8With, encodeUtf8)
@@ -24,7 +23,7 @@ import Data.Text.Encoding.Error (lenientDecode)
 import Data.Text.Lazy (fromStrict)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
-import Database.Persist.Sql (Entity(..), Key, (==.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst, toSqlKey)
+import Database.Persist.Sql (Entity(..), Key, (==.), (=.), deleteWhere, fromSqlKey, getBy, insert, insert_, selectFirst, toSqlKey, update)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
@@ -72,7 +71,7 @@ $(share
     deriving Show
 
   EmailLoginToken
-    email      EmailId
+    emailId    EmailId
     loginToken LoginToken
     created    UTCTime
 
@@ -363,21 +362,20 @@ handleProxy req = do
   key <- readerShared sessionKey
   let oldReqHeaders = requestHeaders req
       oldReqHeadersWithoutUserId = filter (\(header, _) -> header /= "X-UserId") oldReqHeaders
-      maybeRawCookies = find (\(header, _) -> header == hCookie) oldReqHeadersWithoutUserId
-      maybeCookies = parseCookies . snd <$> maybeRawCookies
+      maybeCookies = parseCookies <$> lookup hCookie oldReqHeadersWithoutUserId
   $(logDebug) $ "handleProxy, maybeCookies: " <> tshow maybeCookies
   case maybeCookies of
     Nothing -> do
       let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
       pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
     Just cookies -> do
-      let maybeSessionCookie = find (\(name, _) -> name == "_GG_SESSION") cookies
+      let maybeSessionCookie = lookup "_GG_SESSION" cookies
       $(logDebug) $ "handleProxy, maybeSessionCookie: " <> tshow maybeSessionCookie
       case maybeSessionCookie of
         Nothing -> do
           let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
           pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
-        Just (_, sessionCookie) -> do
+        Just sessionCookie -> do
           $(logDebug) $ "handleProxy, sessionCookie: " <> tshow sessionCookie
           $(logDebug) $ "handleProxy, rawUserKey: " <> tshow (decrypt key sessionCookie)
           let maybeUserKey = do
@@ -431,15 +429,15 @@ handleEmailRegister req = do
   let reqBodyOpts =
         setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
-  let maybeEmail = find (\(param, _) -> param == "email") params
-      maybePass = find (\(param, _) -> param == "password") params
+  let maybeEmail = lookup "email" params
+      maybePass = lookup "password" params
   case maybeEmail of
     Nothing -> undefined
-    Just (_, byteStringEmail) -> do
+    Just byteStringEmail -> do
       let email = decodeUtf8With lenientDecode byteStringEmail
       case maybePass of
         Nothing -> undefined
-        Just (_, pass) ->
+        Just pass ->
           if not (isValid byteStringEmail)
             then undefined
             else do
@@ -465,6 +463,7 @@ handleEmailRegister req = do
                           "foobar@example.com"
                           "Confirm your email address"
                           (fromStrict $ "http://localhost:3000/email/confirm?token=" <> loginToken)
+                  $(logDebug) $ "Sending email: " <> tshow mail
                   TonaEmail.send mail
                   let resp =
                         responseLBS
@@ -472,6 +471,33 @@ handleEmailRegister req = do
                           [(hLocation, "http://localhost:3000/")]
                           mempty
                   pure $ WPRResponse resp
+
+data EmailConfRes = EmailConfSuccess
+
+handleEmailConfirm :: Request -> Tona WaiProxyResponse
+handleEmailConfirm req = do
+  let maybeToken = join $ lookup "token" $ queryString req
+  case maybeToken of
+    Nothing -> undefined
+    Just byteStringToken -> do
+      let token = decodeUtf8With lenientDecode byteStringToken
+      res <-
+        TonaDb.run $ do
+          maybeLoginTokenEntity <-
+            selectFirst [EmailLoginTokenLoginToken ==. LoginToken token] []
+          case maybeLoginTokenEntity of
+            Nothing -> undefined
+            Just (Entity _ EmailLoginToken{emailLoginTokenEmailId}) -> do
+              update emailLoginTokenEmailId [EmailVerified =. True]
+              pure EmailConfSuccess
+      case res of
+        EmailConfSuccess -> do
+          let resp =
+                responseLBS
+                  status302
+                  [(hLocation, "http://localhost:3000/")]
+                  mempty
+          pure $ WPRResponse resp
 
 
 toStrictByteString :: Builder -> ByteString
@@ -487,6 +513,7 @@ router req = do
     "twitter":"callback":_ -> handleTwitterCallback req
     "twitter":"login":_ -> handleTwitterLogin req
     "email":"register":_ -> handleEmailRegister req
+    "email":"confirm":_ -> handleEmailConfirm req
     _ -> handleProxy req
 
 app :: Config -> Shared -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
