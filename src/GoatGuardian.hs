@@ -18,6 +18,7 @@ import Control.FromSum (fromMaybeM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import Data.ByteString.Lazy (toStrict)
+import qualified Data.ByteString.Lazy as ByteString.Lazy
 import Data.ByteString.Lazy.Builder (Builder, toLazyByteString)
 import Data.Semigroup ((<>))
 import Data.Text (Text, pack, unpack)
@@ -31,7 +32,7 @@ import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowe
 import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
-import Network.HTTP.Types.Status (status302, status403, status404, status500)
+import Network.HTTP.Types.Status (Status, status302, status400, status403, status404, status500)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -540,8 +541,28 @@ handleEmailLogin req = do
               mempty
       pure $ WPRResponse resp
   case eitherResp of
-    Left _ -> undefined
+    Left EmailLoginEmailNotFoundInDb ->
+      pure $ errResp status403 "error logging in"
+    Left EmailLoginEmailNotVerified ->
+      pure $ errResp status403 "email address not verified"
+    Left EmailLoginNoEmailParam ->
+      pure $ errResp status400 "email query param not found"
+    Left EmailLoginNoPassParam ->
+      pure $ errResp status400 "password query param not found"
+    Left EmailLoginPassIncorrect ->
+      pure $ errResp status403 "error logging in"
+    Left EmailLoginUserNotFoundInDb ->
+      pure $ errResp status500 "internal error, user not found in db"
     Right resp -> pure resp
+  where
+    errResp :: Status -> Text -> WaiProxyResponse
+    errResp status msg =
+      let resp =
+            responseLBS status [] $
+              "<p>in email login, " <>
+              ByteString.Lazy.fromStrict (encodeUtf8 msg) <>
+              "</p>"
+      in WPRResponse resp
 
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
