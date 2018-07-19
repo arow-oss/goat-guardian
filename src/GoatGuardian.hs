@@ -8,10 +8,13 @@
 
 module GoatGuardian where
 
-import Control.Monad (join)
+import Control.Monad (join, when)
 import Control.Monad.Catch (try)
+import Control.Monad.Except (runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask)
+import Control.Monad.Trans.Class (lift)
+import Control.FromSum (fromMaybeM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import Data.ByteString.Lazy (toStrict)
@@ -499,6 +502,14 @@ handleEmailConfirm req = do
                   mempty
           pure $ WPRResponse resp
 
+data EmailLoginErr
+  = EmailLoginEmailNotFoundInDb
+  | EmailLoginEmailNotVerified
+  | EmailLoginNoEmailParam
+  | EmailLoginNoPassParam
+  | EmailLoginPassIncorrect
+  | EmailLoginUserNotFoundInDb
+
 handleEmailLogin :: Request -> Tona WaiProxyResponse
 handleEmailLogin req = do
   let reqBodyOpts =
@@ -506,37 +517,31 @@ handleEmailLogin req = do
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeEmail = lookup "email" params
       maybePass = lookup "password" params
-  case maybeEmail of
-    Nothing -> undefined
-    Just byteStringEmail -> do
+  eitherResp <-
+    runExceptT $ do
+      byteStringEmail <- fromMaybeM (throwError EmailLoginNoEmailParam) maybeEmail
       let email = decodeUtf8With lenientDecode byteStringEmail
-      case maybePass of
-        Nothing -> undefined
-        Just byteStringPass -> do
-          let pass = decodeUtf8With lenientDecode byteStringPass
-          maybeEmailEnt <- TonaDb.run $ getBy $ UniqueEmail email
-          case maybeEmailEnt of
-            Nothing -> undefined
-            Just (Entity _ Email{emailHashedPass, emailVerified, emailUserId}) -> do
-              if not emailVerified
-                then undefined
-                else do
-                  if not (checkPass pass emailHashedPass)
-                    then undefined
-                    else do
-                      maybeUserEnt <- TonaDb.run $ getEntity emailUserId
-                      case maybeUserEnt of
-                        Nothing -> undefined
-                        Just (Entity userKey _) -> do
-                          rawCookie <- createCookie userKey
-                          url <- readerConf redirAfterLoginUrl
-                          let byteStringUrl = encodeUtf8 url
-                              resp =
-                                responseLBS
-                                  status302
-                                  [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
-                                  mempty
-                          pure $ WPRResponse resp
+      byteStringPass <- fromMaybeM (throwError EmailLoginNoPassParam) maybePass
+      let pass = decodeUtf8With lenientDecode byteStringPass
+      maybeEmailEnt <- lift $ TonaDb.run $ getBy $ UniqueEmail email
+      Entity _ Email{emailHashedPass, emailVerified, emailUserId} <-
+        fromMaybeM (throwError EmailLoginEmailNotFoundInDb) maybeEmailEnt
+      when (not emailVerified) $ throwError EmailLoginEmailNotVerified
+      when (not $ checkPass pass emailHashedPass) $ throwError EmailLoginPassIncorrect
+      maybeUserEnt <- lift $ TonaDb.run $ getEntity emailUserId
+      Entity userKey _ <- fromMaybeM (throwError EmailLoginUserNotFoundInDb) maybeUserEnt
+      rawCookie <- lift $ createCookie userKey
+      url <- lift $ readerConf redirAfterLoginUrl
+      let byteStringUrl = encodeUtf8 url
+          resp =
+            responseLBS
+              status302
+              [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
+              mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left _ -> undefined
+    Right resp -> pure resp
 
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString

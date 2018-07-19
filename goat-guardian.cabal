@@ -29,6 +29,7 @@ library
                      , email-validate
                      , envy
                      , exceptions
+                     , from-sum
                      , http-api-data
                      , http-client
                      , http-conduit
@@ -47,6 +48,7 @@ library
                      , tonatona-db-sqlite
                      , tonatona-email-sendmail
                      , tonatona-logger
+                     , transformers
                      , twitter-conduit
                      , wai
                      , wai-extra
