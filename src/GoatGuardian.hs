@@ -32,7 +32,7 @@ import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowe
 import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
-import Network.HTTP.Types.Status (Status, status302, status400, status403, status404, status500)
+import Network.HTTP.Types.Status (Status, status302, status400, status403, status404, status409, status500)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -428,6 +428,12 @@ handleProxy req = do
 noUploadedFilesBackend :: Applicative m => a -> b -> n c -> m ()
 noUploadedFilesBackend _ _ _ = pure ()
 
+data EmailRegErr
+  = EmailRegEmailAlreadyExists
+  | EmailRegEmailInvalid
+  | EmailRegNoEmailParam
+  | EmailRegNoPassParam
+
 handleEmailRegister :: Request -> Tona WaiProxyResponse
 handleEmailRegister req = do
   let reqBodyOpts =
@@ -435,46 +441,61 @@ handleEmailRegister req = do
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeEmail = lookup "email" params
       maybePass = lookup "password" params
-  case maybeEmail of
-    Nothing -> undefined
-    Just byteStringEmail -> do
+  eitherResp <-
+    runExceptT $ do
+      byteStringEmail <- fromMaybeM (throwError EmailRegNoEmailParam) maybeEmail
       let email = decodeUtf8With lenientDecode byteStringEmail
-      case maybePass of
-        Nothing -> undefined
-        Just pass ->
-          if not (isValid byteStringEmail)
-            then undefined
-            else do
-              hashedPass <- hashPass (decodeUtf8With lenientDecode pass)
-              time <- liftIO getCurrentTime
-              token <- createLoginToken
-              maybeLoginToken <- TonaDb.run $ do
-                maybeEmailEntity <- getBy $ UniqueEmail email
-                case maybeEmailEntity of
-                  Just _emailEntity -> pure Nothing
-                  Nothing -> do
-                    userKey <- insert $ User time
-                    emailKey <- insert $ Email email hashedPass False userKey
-                    _emailLoginTokenKey <-
-                      insert $ EmailLoginToken emailKey token time
-                    pure $ Just token
-              case maybeLoginToken of
-                Nothing -> undefined
-                Just (LoginToken loginToken) -> do
-                  let mail =
-                        simpleMail'
-                          (Address Nothing email)
-                          "foobar@example.com"
-                          "Confirm your email address"
-                          (fromStrict $ "http://localhost:3000/email/confirm?token=" <> loginToken)
-                  $(logDebug) $ "Sending email: " <> tshow mail
-                  TonaEmail.send mail
-                  let resp =
-                        responseLBS
-                          status302
-                          [(hLocation, "http://localhost:3000/")]
-                          mempty
-                  pure $ WPRResponse resp
+      pass <- fromMaybeM (throwError EmailRegNoPassParam) maybePass
+      when (not $ isValid byteStringEmail) $ throwError EmailRegEmailInvalid
+      hashedPass <- hashPass $ decodeUtf8With lenientDecode pass
+      time <- liftIO getCurrentTime
+      token <- createLoginToken
+      maybeLoginToken <-
+        lift $
+          TonaDb.run $ do
+            maybeEmailEntity <- getBy $ UniqueEmail email
+            case maybeEmailEntity of
+              Just _emailEntity -> pure Nothing
+              Nothing -> do
+                userKey <- insert $ User time
+                emailKey <- insert $ Email email hashedPass False userKey
+                insert_ $ EmailLoginToken emailKey token time
+                pure $ Just token
+      LoginToken loginToken <-
+        fromMaybeM (throwError EmailRegEmailAlreadyExists) maybeLoginToken
+      let mail =
+            simpleMail'
+              (Address Nothing email)
+              "foobar@example.com"
+              "Confirm your email address"
+              (fromStrict $ "http://localhost:3000/email/confirm?token=" <> loginToken)
+      $(logDebug) $ "Sending email: " <> tshow mail
+      lift $ TonaEmail.send mail
+      let resp =
+            responseLBS
+              status302
+              [(hLocation, "http://localhost:3000/")]
+              mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left EmailRegEmailAlreadyExists ->
+      pure $ errResp status409 "email address already exists"
+    Left EmailRegEmailInvalid ->
+      pure $ errResp status400 "invalid email address"
+    Left EmailRegNoEmailParam ->
+      pure $ errResp status400 "email request body param not found"
+    Left EmailRegNoPassParam ->
+      pure $ errResp status400 "password request body param not found"
+    Right resp -> pure resp
+  where
+    errResp :: Status -> Text -> WaiProxyResponse
+    errResp status msg =
+      let resp =
+            responseLBS status [] $
+              "<p>in email register, " <>
+              ByteString.Lazy.fromStrict (encodeUtf8 msg) <>
+              "</p>"
+      in WPRResponse resp
 
 data EmailConfRes
   = EmailConfNoEmailLoginTokenInDb
@@ -558,9 +579,9 @@ handleEmailLogin req = do
     Left EmailLoginEmailNotVerified ->
       pure $ errResp status403 "email address not verified"
     Left EmailLoginNoEmailParam ->
-      pure $ errResp status400 "email query param not found"
+      pure $ errResp status400 "email request body param not found"
     Left EmailLoginNoPassParam ->
-      pure $ errResp status400 "password query param not found"
+      pure $ errResp status400 "password request body param not found"
     Left EmailLoginPassIncorrect ->
       pure $ errResp status403 "error logging in"
     Left EmailLoginUserNotFoundInDb ->
