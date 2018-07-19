@@ -10,7 +10,7 @@ module GoatGuardian where
 
 import Control.Monad (join, when)
 import Control.Monad.Catch (try)
-import Control.Monad.Except (runExceptT, throwError)
+import Control.Monad.Except (ExceptT(ExceptT), runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask)
 import Control.Monad.Trans.Class (lift)
@@ -476,32 +476,44 @@ handleEmailRegister req = do
                           mempty
                   pure $ WPRResponse resp
 
-data EmailConfRes = EmailConfSuccess
+data EmailConfRes
+  = EmailConfNoEmailLoginTokenInDb
+  | EmailConfNoTokenParam
 
 handleEmailConfirm :: Request -> Tona WaiProxyResponse
 handleEmailConfirm req = do
   let maybeToken = join $ lookup "token" $ queryString req
-  case maybeToken of
-    Nothing -> undefined
-    Just byteStringToken -> do
+  eitherResp <-
+    runExceptT $ do
+      byteStringToken <- fromMaybeM (throwError EmailConfNoTokenParam) maybeToken
       let token = decodeUtf8With lenientDecode byteStringToken
-      res <-
+      ExceptT $
         TonaDb.run $ do
           maybeLoginTokenEntity <-
             selectFirst [EmailLoginTokenLoginToken ==. LoginToken token] []
           case maybeLoginTokenEntity of
-            Nothing -> undefined
+            Nothing -> pure $ Left EmailConfNoEmailLoginTokenInDb
             Just (Entity _ EmailLoginToken{emailLoginTokenEmailId}) -> do
               update emailLoginTokenEmailId [EmailVerified =. True]
-              pure EmailConfSuccess
-      case res of
-        EmailConfSuccess -> do
-          let resp =
-                responseLBS
-                  status302
-                  [(hLocation, "http://localhost:3000/")]
-                  mempty
-          pure $ WPRResponse resp
+              pure $ Right ()
+  case eitherResp of
+    Left EmailConfNoEmailLoginTokenInDb ->
+      pure $ errResp status404 "no corresponding login token in db"
+    Left EmailConfNoTokenParam ->
+      pure $ errResp status400 "token query param not found"
+    Right () -> do
+      let resp =
+            responseLBS status302 [(hLocation, "http://localhost:3000/")] mempty
+      pure $ WPRResponse resp
+  where
+    errResp :: Status -> Text -> WaiProxyResponse
+    errResp status msg =
+      let resp =
+            responseLBS status [] $
+              "<p>in email confirm, " <>
+              ByteString.Lazy.fromStrict (encodeUtf8 msg) <>
+              "</p>"
+      in WPRResponse resp
 
 data EmailLoginErr
   = EmailLoginEmailNotFoundInDb
