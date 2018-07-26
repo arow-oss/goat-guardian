@@ -597,6 +597,63 @@ handleEmailLogin req = do
               "</p>"
       in WPRResponse resp
 
+data EmailChangePassErr
+  = EmailChangePassNoOldPassParam
+
+handleEmailChangePass :: Request -> Tona WaiProxyResponse
+handleEmailChangePass req = do
+  let reqBodyOpts =
+        setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
+  (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
+  let maybeEmail = lookup "old-pass" params
+      maybePass = lookup "new-pass" params
+  eitherResp <-
+    runExceptT $ do
+      undefined
+      -- byteStringEmail <- fromMaybeM (throwError EmailLoginNoOldPassParam) maybeEmail
+      -- let email = decodeUtf8With lenientDecode byteStringEmail
+      -- byteStringPass <- fromMaybeM (throwError EmailLoginNoNewPassParam) maybePass
+      -- let pass = decodeUtf8With lenientDecode byteStringPass
+      -- maybeEmailEnt <- lift $ TonaDb.run $ getBy $ UniqueEmail email
+      -- Entity _ Email{emailHashedPass, emailVerified, emailUserId} <-
+      --   fromMaybeM (throwError EmailLoginEmailNotFoundInDb) maybeEmailEnt
+      -- when (not emailVerified) $ throwError EmailLoginEmailNotVerified
+      -- when (not $ checkPass pass emailHashedPass) $ throwError EmailLoginPassIncorrect
+      -- maybeUserEnt <- lift $ TonaDb.run $ getEntity emailUserId
+      -- Entity userKey _ <- fromMaybeM (throwError EmailLoginUserNotFoundInDb) maybeUserEnt
+      -- rawCookie <- lift $ createCookie userKey
+      -- url <- lift $ readerConf redirAfterLoginUrl
+      -- let byteStringUrl = encodeUtf8 url
+      --     resp =
+      --       responseLBS
+      --         status302
+      --         [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
+      --         mempty
+      -- pure $ WPRResponse resp
+  case eitherResp of
+    -- Left EmailLoginEmailNotFoundInDb ->
+    --   pure $ errResp status403 "error logging in"
+    -- Left EmailLoginEmailNotVerified ->
+    --   pure $ errResp status403 "email address not verified"
+    Left EmailChangePassNoOldPassParam ->
+      pure $ errResp status400 "old-pass request body param not found"
+    -- Left EmailLoginNoPassParam ->
+    --   pure $ errResp status400 "password request body param not found"
+    -- Left EmailLoginPassIncorrect ->
+    --   pure $ errResp status403 "error logging in"
+    -- Left EmailLoginUserNotFoundInDb ->
+    --   pure $ errResp status500 "internal error, user not found in db"
+    Right resp -> pure resp
+  where
+    errResp :: Status -> Text -> WaiProxyResponse
+    errResp status msg =
+      let resp =
+            responseLBS status [] $
+              "<p>in email change pass, " <>
+              ByteString.Lazy.fromStrict (encodeUtf8 msg) <>
+              "</p>"
+      in WPRResponse resp
+
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
 
@@ -612,6 +669,7 @@ router req = do
     "email":"register":_ -> handleEmailRegister req
     "email":"confirm":_ -> handleEmailConfirm req
     "email":"login":_ -> handleEmailLogin req
+    "email":"change-password":_ -> handleEmailChangePass req
     _ -> handleProxy req
 
 app :: Config -> Shared -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
