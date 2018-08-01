@@ -65,23 +65,27 @@ type API =
   Get '[HTML] Html :<|>
   "after-login" :> UserIdHeader :> Get '[HTML] Html :<|>
   "after-login" :> UserIdHeader :> ReqBody '[FormUrlEncoded] PostContents :> Post '[HTML] Void :<|>
-  "all-posts" :> OptionalUserIdHeader :> Get '[HTML] Html
+  "all-posts" :> OptionalUserIdHeader :> Get '[HTML] Html :<|>
+  "email-login-page" :> Get '[HTML] Html
 
 server :: SqlBackend -> Server API
 server sqlBackend =
   getHomePage :<|>
   getAfterLogin sqlBackend :<|>
   postAfterLogin sqlBackend :<|>
-  getAllPosts sqlBackend
+  getAllPosts sqlBackend :<|>
+  getEmailLoginPage
 
 getHomePage :: Handler Html
 getHomePage = do
   pure $
     html $ do
       head $ title "Example Servant App"
-      body $
+      body $ do
         p $
           a ! href "http://localhost:3000/twitter/login" $ "login with twitter"
+        p $
+          a ! href "http://localhost:3000/email-login-page" $ "login with email"
 
 getAfterLogin :: SqlBackend -> UserId -> Handler Html
 getAfterLogin sqlBackend userId = do
@@ -130,6 +134,19 @@ getAllPosts sqlBackend maybeUserId = do
           forM_ blogPostEntities $ \(Entity blogPostId blogPost) ->
             li . toHtml $
               "id " <> show (fromSqlKey blogPostId) <> ": " <> unpack (blogPostContent blogPost)
+
+getEmailLoginPage :: Handler Html
+getEmailLoginPage = do
+  pure $
+    html $ do
+      head $ title "Example Servant App"
+      body $ do
+        h1 $ "Email Login"
+        form ! method "POST" $ do
+          p $ do
+            "contents"
+            (input ! type_ "text" ! name "contents")
+          input ! type_ "submit" ! value "Submit"
 
 runDb :: MonadIO m => SqlBackend -> ReaderT SqlBackend IO a -> m a
 runDb sqlBackend query = liftIO $ runSqlConn query sqlBackend
