@@ -360,6 +360,9 @@ createCookie userKey = do
       rawSetCookie = toStrictByteString $ renderSetCookie setCookie
   pure rawSetCookie
 
+data HandleProxyErr
+  = HandleProxyNoCookies
+  | HandleProxyNoSessCookie
 
 handleProxy :: Request -> Tona WaiProxyResponse
 handleProxy req = do
@@ -368,62 +371,64 @@ handleProxy req = do
       oldReqHeadersWithoutUserId = filter (\(header, _) -> header /= "X-UserId") oldReqHeaders
       maybeCookies = parseCookies <$> lookup hCookie oldReqHeadersWithoutUserId
   $(logDebug) $ "handleProxy, maybeCookies: " <> tshow maybeCookies
-  case maybeCookies of
-    Nothing -> do
-      let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
-      pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
-    Just cookies -> do
+  eitherResp <-
+    runExceptT $ do
+      cookies <- fromMaybeM (throwError HandleProxyNoCookies) maybeCookies
       let maybeSessionCookie = lookup "_GG_SESSION" cookies
       $(logDebug) $ "handleProxy, maybeSessionCookie: " <> tshow maybeSessionCookie
-      case maybeSessionCookie of
+      sessionCookie <- fromMaybeM (throwError HandleProxyNoSessCookie) maybeSessionCookie
+      $(logDebug) $ "handleProxy, sessionCookie: " <> tshow sessionCookie
+      $(logDebug) $ "handleProxy, rawUserKey: " <> tshow (decrypt key sessionCookie)
+      let maybeUserKey = do
+            rawUserKey <- decrypt key sessionCookie
+            textUserKey <- either (const Nothing) Just $ decodeUtf8' rawUserKey
+            int64UserKey <- readMaybe $ unpack textUserKey
+            pure $ toSqlKey int64UserKey
+      $(logDebug) $ "handleProxy, maybeUserKey: " <> tshow maybeUserKey
+      case maybeUserKey of
         Nothing -> do
-          let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
+          let withoutSessionCookie = filter (\(name, _) -> name /= "_GG_SESSION") cookies
+              oldReqHeadersWithoutCookie =
+                filter (\(header, _) -> header /= hCookie) oldReqHeadersWithoutCookie
+              newCookieHeader =
+                (hCookie, toStrictByteString (renderCookies withoutSessionCookie))
+              newHeaders = newCookieHeader : oldReqHeadersWithoutCookie
+              newReq = req { requestHeaders = newHeaders }
           pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
-        Just sessionCookie -> do
-          $(logDebug) $ "handleProxy, sessionCookie: " <> tshow sessionCookie
-          $(logDebug) $ "handleProxy, rawUserKey: " <> tshow (decrypt key sessionCookie)
-          let maybeUserKey = do
-                rawUserKey <- decrypt key sessionCookie
-                textUserKey <- either (const Nothing) Just $ decodeUtf8' rawUserKey
-                int64UserKey <- readMaybe $ unpack textUserKey
-                pure $ toSqlKey int64UserKey
-          $(logDebug) $ "handleProxy, maybeUserKey: " <> tshow maybeUserKey
-          case maybeUserKey of
-            Nothing -> do
-              let withoutSessionCookie = filter (\(name, _) -> name /= "_GG_SESSION") cookies
-                  oldReqHeadersWithoutCookie =
-                    filter (\(header, _) -> header /= hCookie) oldReqHeadersWithoutCookie
-                  newCookieHeader =
-                    (hCookie, toStrictByteString (renderCookies withoutSessionCookie))
-                  newHeaders = newCookieHeader : oldReqHeadersWithoutCookie
-                  newReq = req { requestHeaders = newHeaders }
-              pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
-            Just userKey -> do
-              let withoutSessionCookie =
-                    filter (\(name, _) -> name /= "_GG_SESSION") cookies
-                  oldReqHeadersWithoutCookie =
-                    filter
-                      (\(header, _) -> header /= hCookie)
-                      oldReqHeadersWithoutUserId
-                  newCookieHeader =
-                    case withoutSessionCookie of
-                      [] -> []
-                      (_:_) ->
-                        [ (hCookie
-                          , toStrictByteString (renderCookies withoutSessionCookie)
-                          )
-                        ]
-                  newHeaders =
-                    [("X-UserId", userKeyToByteString userKey)] <>
-                    newCookieHeader <>
-                    oldReqHeadersWithoutCookie
-                  newReq = req { requestHeaders = newHeaders }
-              $(logDebug) $ "handleProxy, userKey: " <> tshow userKey
-              $(logDebug) $ "handleProxy, oldReqHeadersWithoutCookie: " <> tshow oldReqHeadersWithoutCookie
-              $(logDebug) $ "handleProxy, newCookieHeader: " <> tshow newCookieHeader
-              $(logDebug) $ "handleProxy, nweHeaders: " <> tshow newHeaders
-              $(logDebug) $ "handleProxy, newReq: " <> tshow newReq
-              pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+        Just userKey -> do
+          let withoutSessionCookie =
+                filter (\(name, _) -> name /= "_GG_SESSION") cookies
+              oldReqHeadersWithoutCookie =
+                filter
+                  (\(header, _) -> header /= hCookie)
+                  oldReqHeadersWithoutUserId
+              newCookieHeader =
+                case withoutSessionCookie of
+                  [] -> []
+                  (_:_) ->
+                    [ (hCookie
+                      , toStrictByteString (renderCookies withoutSessionCookie)
+                      )
+                    ]
+              newHeaders =
+                [("X-UserId", userKeyToByteString userKey)] <>
+                newCookieHeader <>
+                oldReqHeadersWithoutCookie
+              newReq = req { requestHeaders = newHeaders }
+          $(logDebug) $ "handleProxy, userKey: " <> tshow userKey
+          $(logDebug) $ "handleProxy, oldReqHeadersWithoutCookie: " <> tshow oldReqHeadersWithoutCookie
+          $(logDebug) $ "handleProxy, newCookieHeader: " <> tshow newCookieHeader
+          $(logDebug) $ "handleProxy, nweHeaders: " <> tshow newHeaders
+          $(logDebug) $ "handleProxy, newReq: " <> tshow newReq
+          pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+  case eitherResp of
+    Left HandleProxyNoCookies -> do
+      let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
+      pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+    Left HandleProxyNoSessCookie -> do
+      let newReq = req { requestHeaders = oldReqHeadersWithoutUserId }
+      pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
+    Right resp -> pure resp
 
 noUploadedFilesBackend :: Applicative m => a -> b -> n c -> m ()
 noUploadedFilesBackend _ _ _ = pure ()
@@ -602,8 +607,12 @@ data EmailChangePassErr
 
 handleEmailChangePass :: Request -> Tona WaiProxyResponse
 handleEmailChangePass req = do
+  key <- readerShared sessionKey
   let reqBodyOpts =
         setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
+      oldReqHeaders = requestHeaders req
+      oldReqHeadersWithoutUserId = filter (\(header, _) -> header /= "X-UserId") oldReqHeaders
+      maybeCookies = parseCookies <$> lookup hCookie oldReqHeadersWithoutUserId
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeEmail = lookup "old-pass" params
       maybePass = lookup "new-pass" params
