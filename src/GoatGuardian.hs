@@ -42,11 +42,10 @@ import Text.Email.Validate (isValid)
 import Text.Read (readMaybe)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
-import Tonatona.Db.Sqlite (TonaDbConfig, TonaDbSqlShared)
 import qualified Tonatona.Db.Sqlite as TonaDb
 import Tonatona.Email.Sendmail (Address(Address), simpleMail')
 import qualified Tonatona.Email.Sendmail as TonaEmail
-import Tonatona.Logger (TonaLoggerShared, logDebug, stdoutLogger)
+import Tonatona.Logger (logDebug, stdoutLogger)
 import qualified Tonatona.Logger as TonaLogger
 import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
 import Web.ClientSession (decrypt, encryptIO, randomKey)
@@ -138,7 +137,7 @@ instance FromEnv Config where
       <*> fromEnv
       <*> envMaybe "GG_REDIR_AFTER_LOGIN_URL" .!= "http://localhost:3000"
 
-instance TonaDbConfig Config where
+instance TonaDb.HasConfig Config where
   config = tonaDb
 
 data Shared = Shared
@@ -157,10 +156,10 @@ instance Plug Config Shared where
       <*> TonaLogger.init stdoutLogger
       <*> initRawSessKeyOrFail rawSessKey
 
-instance TonaDbSqlShared Shared where
+instance TonaDb.HasShared Shared where
   shared = tonaDb
 
-instance TonaLoggerShared Shared where
+instance TonaLogger.HasShared Shared where
   shared = tonaLogger
 
 type Tona = TonaM Config Shared
