@@ -27,12 +27,12 @@ import Data.Text.Encoding.Error (lenientDecode)
 import Data.Text.Lazy (fromStrict)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
-import Database.Persist.Sql (Entity(..), Key, (==.), (=.), deleteWhere, fromSqlKey, getBy, getEntity, insert, insert_, selectFirst, toSqlKey, update)
+import Database.Persist.Sql (Entity(..), Key, (==.), (=.), deleteWhere, fromSqlKey, getBy, getEntity, insert, insert_, repsert, selectFirst, toSqlKey, update)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
-import Network.HTTP.Types.Status (Status, status302, status400, status403, status404, status409, status500)
+import Network.HTTP.Types.Status (Status, status200, status302, status400, status403, status404, status409, status500)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -603,7 +603,14 @@ handleEmailLogin req = do
       in WPRResponse resp
 
 data EmailChangePassErr
-  = EmailChangePassNoOldPassParam
+  = EmailChangePassNoCookies
+  | EmailChangePassNoNewPassParam
+  | EmailChangePassNoOldPassParam
+  | EmailChangePassNoSessCookie
+  | EmailChangePassOldPassIncorrect
+  | EmailChangePassSessCookieIncorrect
+  | EmailChangePassUserDoesNotExist
+  | EmailChangePassUserNotVerified
 
 handleEmailChangePass :: Request -> Tona WaiProxyResponse
 handleEmailChangePass req = do
@@ -614,44 +621,53 @@ handleEmailChangePass req = do
       oldReqHeadersWithoutUserId = filter (\(header, _) -> header /= "X-UserId") oldReqHeaders
       maybeCookies = parseCookies <$> lookup hCookie oldReqHeadersWithoutUserId
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
-  let maybeEmail = lookup "old-pass" params
-      maybePass = lookup "new-pass" params
+  let maybeOldPass = lookup "old-pass" params
+      maybeNewPass = lookup "new-pass" params
   eitherResp <-
     runExceptT $ do
       undefined
-      -- byteStringEmail <- fromMaybeM (throwError EmailLoginNoOldPassParam) maybeEmail
-      -- let email = decodeUtf8With lenientDecode byteStringEmail
-      -- byteStringPass <- fromMaybeM (throwError EmailLoginNoNewPassParam) maybePass
-      -- let pass = decodeUtf8With lenientDecode byteStringPass
-      -- maybeEmailEnt <- lift $ TonaDb.run $ getBy $ UniqueEmail email
-      -- Entity _ Email{emailHashedPass, emailVerified, emailUserId} <-
-      --   fromMaybeM (throwError EmailLoginEmailNotFoundInDb) maybeEmailEnt
-      -- when (not emailVerified) $ throwError EmailLoginEmailNotVerified
-      -- when (not $ checkPass pass emailHashedPass) $ throwError EmailLoginPassIncorrect
-      -- maybeUserEnt <- lift $ TonaDb.run $ getEntity emailUserId
-      -- Entity userKey _ <- fromMaybeM (throwError EmailLoginUserNotFoundInDb) maybeUserEnt
-      -- rawCookie <- lift $ createCookie userKey
-      -- url <- lift $ readerConf redirAfterLoginUrl
-      -- let byteStringUrl = encodeUtf8 url
-      --     resp =
-      --       responseLBS
-      --         status302
-      --         [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
-      --         mempty
-      -- pure $ WPRResponse resp
+      cookies <- fromMaybeM (throwError EmailChangePassNoCookies) maybeCookies
+      let maybeSessionCookie = lookup "_GG_SESSION" cookies
+      sessionCookie <- fromMaybeM (throwError EmailChangePassNoSessCookie) maybeSessionCookie
+      let maybeUserKey = do
+            rawUserKey <- decrypt key sessionCookie
+            textUserKey <- either (const Nothing) Just $ decodeUtf8' rawUserKey
+            int64UserKey <- readMaybe $ unpack textUserKey
+            pure $ toSqlKey int64UserKey
+      userKey <- fromMaybeM (throwError EmailChangePassSessCookieIncorrect) maybeUserKey
+      byteStringOldPass <- fromMaybeM (throwError EmailChangePassNoOldPassParam) maybeOldPass
+      byteStringNewPass <- fromMaybeM (throwError EmailChangePassNoNewPassParam) maybeNewPass
+      let oldPass = decodeUtf8With lenientDecode byteStringOldPass
+      let newPass = decodeUtf8With lenientDecode byteStringNewPass
+      maybeEmailEnt <-
+        lift $ TonaDb.run $ selectFirst [EmailUserId ==. userKey] []
+      Entity emailKey emailEnt@Email{emailHashedPass, emailVerified} <-
+        fromMaybeM (throwError EmailChangePassUserDoesNotExist) maybeEmailEnt
+      when (not emailVerified) $
+        throwError EmailChangePassUserNotVerified
+      when (not $ checkPass oldPass emailHashedPass) $ throwError EmailChangePassOldPassIncorrect
+      newHashedPass <- hashPass newPass
+      let newEmailEnt = emailEnt { emailHashedPass = newHashedPass }
+      lift $ TonaDb.run $ repsert emailKey newEmailEnt
+      let resp = responseLBS status200 [] mempty
+      pure $ WPRResponse resp
   case eitherResp of
-    -- Left EmailLoginEmailNotFoundInDb ->
-    --   pure $ errResp status403 "error logging in"
-    -- Left EmailLoginEmailNotVerified ->
-    --   pure $ errResp status403 "email address not verified"
+    Left EmailChangePassNoCookies ->
+      pure $ errResp status400 "no cookies found"
+    Left EmailChangePassNoNewPassParam ->
+      pure $ errResp status400 "new-pass request body param not found"
     Left EmailChangePassNoOldPassParam ->
       pure $ errResp status400 "old-pass request body param not found"
-    -- Left EmailLoginNoPassParam ->
-    --   pure $ errResp status400 "password request body param not found"
-    -- Left EmailLoginPassIncorrect ->
-    --   pure $ errResp status403 "error logging in"
-    -- Left EmailLoginUserNotFoundInDb ->
-    --   pure $ errResp status500 "internal error, user not found in db"
+    Left EmailChangePassNoSessCookie ->
+      pure $ errResp status400 "the _GG_SESSION cookie is not found"
+    Left EmailChangePassOldPassIncorrect ->
+      pure $ errResp status403 "old-pass is incorrect"
+    Left EmailChangePassSessCookieIncorrect ->
+      pure $ errResp status400 "the _GG_SESSION cookie is malformed"
+    Left EmailChangePassUserDoesNotExist ->
+      pure $ errResp status500 "the user in question does not exist"
+    Left EmailChangePassUserNotVerified ->
+      pure $ errResp status403 "the user is not yet verified"
     Right resp -> pure resp
   where
     errResp :: Status -> Text -> WaiProxyResponse
