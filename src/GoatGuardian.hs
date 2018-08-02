@@ -33,6 +33,7 @@ import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSetti
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
 import Network.HTTP.Types.Status (Status, status200, status302, status400, status403, status404, status409, status500)
+import Network.HTTP.Types.URI (urlEncode)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
@@ -681,6 +682,76 @@ handleEmailChangePass req = do
               "</p>"
       in WPRResponse resp
 
+data EmailResetPassSendEmailErr
+  = EmailResetPassSendEmailEmailDoesNotExist
+  | EmailResetPassSendEmailNoEmailParam
+  | EmailResetPassSendEmailNoNextParam
+
+handleEmailResetPassSendEmail :: Request -> Tona WaiProxyResponse
+handleEmailResetPassSendEmail req = do
+  let reqBodyOpts =
+        setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
+  (params, _) <-
+    liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
+  let maybeEmail = lookup "email" params
+      maybeNext = lookup "next" params
+  eitherResp <-
+    runExceptT $ do
+      byteStringEmail <-
+        fromMaybeM (throwError EmailResetPassSendEmailNoEmailParam) maybeEmail
+      let email = decodeUtf8With lenientDecode byteStringEmail
+      next <-
+        fromMaybeM (throwError EmailResetPassSendEmailNoNextParam) maybeNext
+      time <- liftIO getCurrentTime
+      token <- createLoginToken
+      maybeLoginToken <-
+        lift $
+          TonaDb.run $ do
+            maybeEmailEntity <- getBy $ UniqueEmail email
+            case maybeEmailEntity of
+              Nothing -> pure Nothing
+              Just (Entity emailKey _) -> do
+                insert_ $ EmailLoginToken emailKey token time
+                pure $ Just token
+      LoginToken loginToken <-
+        fromMaybeM
+          (throwError EmailResetPassSendEmailEmailDoesNotExist)
+          maybeLoginToken
+      let mail =
+            simpleMail'
+              (Address Nothing email)
+              "foobar@example.com"
+              "Confirm your email address"
+              (fromStrict $
+                "http://localhost:3000/email/confirm?token=" <> loginToken <>
+                "&next=" <> decodeUtf8With lenientDecode (urlEncode True next)
+              )
+      $(logDebug) $ "Sending email: " <> tshow mail
+      lift $ TonaEmail.send mail
+      let resp =
+            responseLBS
+              status302
+              [(hLocation, "http://localhost:3000/")]
+              mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left EmailResetPassSendEmailEmailDoesNotExist ->
+      pure $ errResp status409 "email address not in database"
+    Left EmailResetPassSendEmailNoEmailParam ->
+      pure $ errResp status400 "email request body param not found"
+    Left EmailResetPassSendEmailNoNextParam ->
+      pure $ errResp status400 "next request body param not found"
+    Right resp -> pure resp
+  where
+    errResp :: Status -> Text -> WaiProxyResponse
+    errResp status msg =
+      let resp =
+            responseLBS status [] $
+              "<p>in email reset pass send email, " <>
+              ByteString.Lazy.fromStrict (encodeUtf8 msg) <>
+              "</p>"
+      in WPRResponse resp
+
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
 
@@ -697,6 +768,9 @@ router req = do
     "email":"confirm":_ -> handleEmailConfirm req
     "email":"login":_ -> handleEmailLogin req
     "email":"change-password":_ -> handleEmailChangePass req
+    "email":"reset-password-send-email":_ -> handleEmailResetPassSendEmail req
+    "email":"reset-password-login-with-token":_ -> handleEmailResetPassLoginWithToken req
+    "email":"reset-password":_ -> handleEmailResetPass req
     _ -> handleProxy req
 
 app :: Config -> Shared -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
