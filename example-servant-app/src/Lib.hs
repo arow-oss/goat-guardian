@@ -67,7 +67,8 @@ type API =
   "after-login" :> UserIdHeader :> ReqBody '[FormUrlEncoded] PostContents :> Post '[HTML] Void :<|>
   "all-posts" :> OptionalUserIdHeader :> Get '[HTML] Html :<|>
   "email-login-page" :> Get '[HTML] Html :<|>
-  "email-register-page" :> Get '[HTML] Html
+  "email-register-page" :> Get '[HTML] Html :<|>
+  "email-change-pass-page" :> Get '[HTML] Html
 
 server :: SqlBackend -> Server API
 server sqlBackend =
@@ -76,7 +77,8 @@ server sqlBackend =
   postAfterLogin sqlBackend :<|>
   getAllPosts sqlBackend :<|>
   getEmailLoginPage :<|>
-  getEmailRegisterPage
+  getEmailRegisterPage :<|>
+  getEmailChangePassPage
 
 getHomePage :: Maybe UserId -> Handler Html
 getHomePage maybeUserId = do
@@ -96,6 +98,9 @@ getHomePage maybeUserId = do
           a ! href "http://localhost:3000/email-login-page" $ "login with email"
         p $
           a ! href "http://localhost:3000/email-register-page" $ "register with email"
+        p $
+          a ! href "http://localhost:3000/email-change-pass-page" $
+            "change password for email login"
         h3 $ "All Posts"
         p $
           a ! href "http://localhost:3000/all-posts" $ "See all posts"
@@ -155,12 +160,14 @@ getEmailLoginPage = do
       head $ title "Example Servant App"
       body $ do
         h1 $ "Email Login"
-        form ! method "POST" $ do
+        form ! method "POST" ! action "/email/login" $ do
           p $ do
-            "contents"
-            (input ! type_ "text" ! name "contents")
+            "email"
+            (input ! type_ "text" ! name "email")
+          p $ do
+            "password"
+            (input ! type_ "text" ! name "password")
           input ! type_ "submit" ! value "Submit"
-        p "After registering, you will be sent an email to do an email confirmation."
 
 getEmailRegisterPage :: Handler Html
 getEmailRegisterPage = do
@@ -176,6 +183,22 @@ getEmailRegisterPage = do
           p $ do
             "password"
             (input ! type_ "text" ! name "password")
+          input ! type_ "submit" ! value "Submit"
+
+getEmailChangePassPage :: Handler Html
+getEmailChangePassPage = do
+  pure $
+    html $ do
+      head $ title "Example Servant App"
+      body $ do
+        h1 $ "Change Email Login Password"
+        form ! method "POST" ! action "/email/change-password" $ do
+          p $ do
+            "old password"
+            (input ! type_ "text" ! name "old-pass")
+          p $ do
+            "new password"
+            (input ! type_ "text" ! name "new-pass")
           input ! type_ "submit" ! value "Submit"
 
 runDb :: MonadIO m => SqlBackend -> ReaderT SqlBackend IO a -> m a
