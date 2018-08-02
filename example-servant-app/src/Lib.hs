@@ -31,8 +31,8 @@ import Network.Wai.Handler.Warp (run)
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Servant (Application, Get, FormUrlEncoded, Handler, Header', Optional, Post, ReqBody, Required, Server, Strict, (:>), (:<|>)((:<|>)), err302, errHeaders, serve)
 import Servant.HTML.Blaze (HTML)
-import Text.Blaze.Html5 (Html, ToMarkup(toMarkup), (!), a, body, form, h1, h3, head, html, input, li, p, title, toHtml, ul)
-import Text.Blaze.Html5.Attributes (href, method, name, type_, value)
+import Text.Blaze.Html5 (Html, ToMarkup(toMarkup), (!), a, body, form, h1, h3, head, hr, html, input, li, p, title, toHtml, ul)
+import Text.Blaze.Html5.Attributes (action, href, method, name, type_, value)
 import Web.FormUrlEncoded (Form, FromForm(fromForm), lookupUnique)
 
 import Types (UserId(unUserId))
@@ -62,11 +62,12 @@ instance ToMarkup Void where
   toMarkup void = absurd void
 
 type API =
-  Get '[HTML] Html :<|>
+  OptionalUserIdHeader :> Get '[HTML] Html :<|>
   "after-login" :> UserIdHeader :> Get '[HTML] Html :<|>
   "after-login" :> UserIdHeader :> ReqBody '[FormUrlEncoded] PostContents :> Post '[HTML] Void :<|>
   "all-posts" :> OptionalUserIdHeader :> Get '[HTML] Html :<|>
-  "email-login-page" :> Get '[HTML] Html
+  "email-login-page" :> Get '[HTML] Html :<|>
+  "email-register-page" :> Get '[HTML] Html
 
 server :: SqlBackend -> Server API
 server sqlBackend =
@@ -74,18 +75,30 @@ server sqlBackend =
   getAfterLogin sqlBackend :<|>
   postAfterLogin sqlBackend :<|>
   getAllPosts sqlBackend :<|>
-  getEmailLoginPage
+  getEmailLoginPage :<|>
+  getEmailRegisterPage
 
-getHomePage :: Handler Html
-getHomePage = do
+getHomePage :: Maybe UserId -> Handler Html
+getHomePage maybeUserId = do
   pure $
     html $ do
       head $ title "Example Servant App"
       body $ do
+        h1 $ "Example Servant App Homepage"
+        h3 $
+          "Logged In User? " <>
+            maybe "(not logged in)" (toMarkup . unUserId) maybeUserId
+        h3 $ "Log In?"
         p $
           a ! href "http://localhost:3000/twitter/login" $ "login with twitter"
+        hr
         p $
           a ! href "http://localhost:3000/email-login-page" $ "login with email"
+        p $
+          a ! href "http://localhost:3000/email-register-page" $ "register with email"
+        h3 $ "All Posts"
+        p $
+          a ! href "http://localhost:3000/all-posts" $ "See all posts"
 
 getAfterLogin :: SqlBackend -> UserId -> Handler Html
 getAfterLogin sqlBackend userId = do
@@ -95,7 +108,7 @@ getAfterLogin sqlBackend userId = do
     html $ do
       head $ title "Example Servant App"
       body $ do
-        h1 $ "Example Servant App"
+        h1 $ "Example Servant App for logged-in User"
         h3 $ "Logged In User"
         p $ toHtml $ "logged in as user: " <> show (unUserId userId)
         h3 $ "Create Blog Post"
@@ -147,6 +160,23 @@ getEmailLoginPage = do
             "contents"
             (input ! type_ "text" ! name "contents")
           input ! type_ "submit" ! value "Submit"
+        p "After registering, you will be sent an email to do an email confirmation."
+
+getEmailRegisterPage :: Handler Html
+getEmailRegisterPage = do
+  pure $
+    html $ do
+      head $ title "Example Servant App"
+      body $ do
+        h1 $ "Email Register"
+        form ! method "POST" ! action "/email/register" $ do
+          p $ do
+            "email"
+            (input ! type_ "text" ! name "email")
+          p $ do
+            "password"
+            (input ! type_ "text" ! name "password")
+          input ! type_ "submit" ! value "Submit"
 
 runDb :: MonadIO m => SqlBackend -> ReaderT SqlBackend IO a -> m a
 runDb sqlBackend query = liftIO $ runSqlConn query sqlBackend
@@ -159,4 +189,6 @@ defaultMain =
   runNoLoggingT $
     withSqliteConn "example-servant-app.sqlite3" $ \sqlBackend -> liftIO $ do
       runDb sqlBackend $ runMigration migrateAll
-      run 8000 . logStdoutDev $ app sqlBackend
+      let port = 8000
+      putStrLn $ "Running example-servant-app on port " <> show port <> "..."
+      run port . logStdoutDev $ app sqlBackend
