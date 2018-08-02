@@ -27,7 +27,7 @@ import Data.Text.Encoding.Error (lenientDecode)
 import Data.Text.Lazy (fromStrict)
 import qualified Data.Text.IO as Text
 import Data.Time.Clock (UTCTime, getCurrentTime)
-import Database.Persist.Sql (Entity(..), Key, (==.), (=.), deleteWhere, fromSqlKey, getBy, getEntity, insert, insert_, repsert, selectFirst, toSqlKey, update)
+import Database.Persist.Sql (Entity(..), Key, (==.), (=.), deleteWhere, fromSqlKey, get, getBy, getEntity, insert, insert_, repsert, selectFirst, toSqlKey, update)
 import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowerCase, share, sqlSettings)
 import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
@@ -723,7 +723,7 @@ handleEmailResetPassSendEmail req = do
               "foobar@example.com"
               "Confirm your email address"
               (fromStrict $
-                "http://localhost:3000/email/confirm?token=" <> loginToken <>
+                "http://localhost:3000/email/reset-password-login-with-token?token=" <> loginToken <>
                 "&next=" <> decodeUtf8With lenientDecode (urlEncode True next)
               )
       $(logDebug) $ "Sending email: " <> tshow mail
@@ -752,6 +752,130 @@ handleEmailResetPassSendEmail req = do
               "</p>"
       in WPRResponse resp
 
+data EmailResetPassTokenRes
+  = EmailResetPassTokenNoEmailInDb
+  | EmailResetPassTokenNoTokenInDb
+  | EmailResetPassTokenNoUserInDb
+  | EmailResetPassTokenNoNextParam
+  | EmailResetPassTokenNoTokenParam
+
+handleEmailResetPassToken :: Request -> Tona WaiProxyResponse
+handleEmailResetPassToken req = do
+  let maybeToken = join $ lookup "token" $ queryString req
+      maybeNext = join $ lookup "next" $ queryString req
+  eitherResp <-
+    runExceptT $ do
+      byteStringToken <- fromMaybeM (throwError EmailResetPassTokenNoTokenParam) maybeToken
+      next <- fromMaybeM (throwError EmailResetPassTokenNoNextParam) maybeNext
+      let token = decodeUtf8With lenientDecode byteStringToken
+      maybeUserEnt <-
+        ExceptT $
+          TonaDb.run $ do
+            maybeLoginTokenEntity <-
+              selectFirst [EmailLoginTokenLoginToken ==. LoginToken token] []
+            case maybeLoginTokenEntity of
+              Nothing -> pure $ Left EmailResetPassTokenNoTokenInDb
+              Just (Entity _ EmailLoginToken{emailLoginTokenEmailId}) -> do
+                maybeEmail <- get emailLoginTokenEmailId
+                case maybeEmail of
+                  Nothing -> pure $ Left EmailResetPassTokenNoEmailInDb
+                  Just Email{emailUserId} -> Right <$> getEntity emailUserId
+      Entity userKey _ <- fromMaybeM (throwError EmailResetPassTokenNoUserInDb) maybeUserEnt
+      rawCookie <- lift $ createCookie userKey
+      let resp =
+            responseLBS
+              status302
+              [(hLocation, next), (hSetCookie, rawCookie)]
+              mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left EmailResetPassTokenNoEmailInDb ->
+      pure $ errResp status404 "no email in db"
+    Left EmailResetPassTokenNoTokenInDb ->
+      pure $ errResp status404 "no token in db"
+    Left EmailResetPassTokenNoUserInDb ->
+      pure $ errResp status404 "no user in db"
+    Left EmailResetPassTokenNoNextParam ->
+      pure $ errResp status400 "next query param not found"
+    Left EmailResetPassTokenNoTokenParam ->
+      pure $ errResp status400 "token query param not found"
+    Right resp -> pure resp
+  where
+    errResp :: Status -> Text -> WaiProxyResponse
+    errResp status msg =
+      let resp =
+            responseLBS status [] $
+              "<p>in email reset pass login with token, " <>
+              ByteString.Lazy.fromStrict (encodeUtf8 msg) <>
+              "</p>"
+      in WPRResponse resp
+
+data EmailResetPassErr
+  = EmailResetPassNoCookies
+  | EmailResetPassNoNewPassParam
+  | EmailResetPassNoSessCookie
+  | EmailResetPassSessCookieIncorrect
+  | EmailResetPassUserDoesNotExist
+
+handleEmailResetPass :: Request -> Tona WaiProxyResponse
+handleEmailResetPass req = do
+  key <- readerShared sessionKey
+  let reqBodyOpts =
+        setMaxRequestNumFiles 0 $ defaultParseRequestBodyOptions
+      oldReqHeaders = requestHeaders req
+      oldReqHeadersWithoutUserId = filter (\(header, _) -> header /= "X-UserId") oldReqHeaders
+      maybeCookies = parseCookies <$> lookup hCookie oldReqHeadersWithoutUserId
+  (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
+  let maybeNewPass = lookup "new-pass" params
+  eitherResp <-
+    runExceptT $ do
+      cookies <- fromMaybeM (throwError EmailResetPassNoCookies) maybeCookies
+      let maybeSessionCookie = lookup "_GG_SESSION" cookies
+      sessionCookie <- fromMaybeM (throwError EmailResetPassNoSessCookie) maybeSessionCookie
+      let maybeUserKey = do
+            rawUserKey <- decrypt key sessionCookie
+            textUserKey <- either (const Nothing) Just $ decodeUtf8' rawUserKey
+            int64UserKey <- readMaybe $ unpack textUserKey
+            pure $ toSqlKey int64UserKey
+      userKey <- fromMaybeM (throwError EmailResetPassSessCookieIncorrect) maybeUserKey
+      byteStringNewPass <- fromMaybeM (throwError EmailResetPassNoNewPassParam) maybeNewPass
+      let newPass = decodeUtf8With lenientDecode byteStringNewPass
+      newHashedPass <- hashPass newPass
+      ExceptT $
+        TonaDb.run $ do
+          maybeEmailEnt <- selectFirst [EmailUserId ==. userKey] []
+          case maybeEmailEnt of
+            Nothing -> pure $ Left EmailResetPassUserDoesNotExist
+            Just (Entity emailKey email) -> do
+              let newEmail = email { emailHashedPass = newHashedPass }
+              repsert emailKey newEmail
+              pure $ Right ()
+      url <- lift $ readerConf redirAfterLoginUrl
+      let byteStringUrl = encodeUtf8 url
+          resp = responseLBS status302 [(hLocation, byteStringUrl)] mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left EmailResetPassNoCookies ->
+      pure $ errResp status400 "no cookies found"
+    Left EmailResetPassNoNewPassParam ->
+      pure $ errResp status400 "new-pass request body param not found"
+    Left EmailResetPassNoSessCookie ->
+      pure $ errResp status400 "the _GG_SESSION cookie is not found"
+    Left EmailResetPassSessCookieIncorrect ->
+      pure $ errResp status400 "the _GG_SESSION cookie is malformed"
+    Left EmailResetPassUserDoesNotExist ->
+      pure $ errResp status500 "the user in question does not exist"
+    Right resp -> pure resp
+  where
+    errResp :: Status -> Text -> WaiProxyResponse
+    errResp status msg =
+      let resp =
+            responseLBS status [] $
+              "<p>in email reset pass, " <>
+              ByteString.Lazy.fromStrict (encodeUtf8 msg) <>
+              "</p>"
+      in WPRResponse resp
+
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
 
@@ -769,7 +893,7 @@ router req = do
     "email":"login":_ -> handleEmailLogin req
     "email":"change-password":_ -> handleEmailChangePass req
     "email":"reset-password-send-email":_ -> handleEmailResetPassSendEmail req
-    "email":"reset-password-login-with-token":_ -> handleEmailResetPassLoginWithToken req
+    "email":"reset-password-login-with-token":_ -> handleEmailResetPassToken req
     "email":"reset-password":_ -> handleEmailResetPass req
     _ -> handleProxy req
 
