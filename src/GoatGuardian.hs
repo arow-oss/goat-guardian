@@ -626,7 +626,6 @@ handleEmailChangePass req = do
       maybeNewPass = lookup "new-pass" params
   eitherResp <-
     runExceptT $ do
-      undefined
       cookies <- fromMaybeM (throwError EmailChangePassNoCookies) maybeCookies
       let maybeSessionCookie = lookup "_GG_SESSION" cookies
       sessionCookie <- fromMaybeM (throwError EmailChangePassNoSessCookie) maybeSessionCookie
@@ -650,7 +649,9 @@ handleEmailChangePass req = do
       newHashedPass <- hashPass newPass
       let newEmailEnt = emailEnt { emailHashedPass = newHashedPass }
       lift $ TonaDb.run $ repsert emailKey newEmailEnt
-      let resp = responseLBS status200 [] mempty
+      url <- lift $ readerConf redirAfterLoginUrl
+      let byteStringUrl = encodeUtf8 url
+          resp = responseLBS status302 [(hLocation, byteStringUrl)] mempty
       pure $ WPRResponse resp
   case eitherResp of
     Left EmailChangePassNoCookies ->
