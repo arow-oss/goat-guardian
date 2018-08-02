@@ -180,7 +180,9 @@ defaultMain = do
       Tona.run $ do
         TonaDb.runMigrate migrateAll
         (conf, shared) <- ask
-        liftIO . run 3000 . logStdoutDev $ app conf shared
+        let port = 3000
+        $(logDebug) $ "Running Goat Guardian on port " <> tshow port <> "..."
+        liftIO . run port . logStdoutDev $ app conf shared
 
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin _req = do
