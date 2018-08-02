@@ -68,7 +68,9 @@ type API =
   "all-posts" :> OptionalUserIdHeader :> Get '[HTML] Html :<|>
   "email-login-page" :> Get '[HTML] Html :<|>
   "email-register-page" :> Get '[HTML] Html :<|>
-  "email-change-pass-page" :> Get '[HTML] Html
+  "email-change-pass-page" :> Get '[HTML] Html :<|>
+  "email-reset-pass-send-email-page" :> Get '[HTML] Html :<|>
+  "email-reset-pass-page" :> Get '[HTML] Html
 
 server :: SqlBackend -> Server API
 server sqlBackend =
@@ -78,7 +80,9 @@ server sqlBackend =
   getAllPosts sqlBackend :<|>
   getEmailLoginPage :<|>
   getEmailRegisterPage :<|>
-  getEmailChangePassPage
+  getEmailChangePassPage :<|>
+  getEmailResetPassSendEmailPage :<|>
+  getEmailResetPassPage
 
 getHomePage :: Maybe UserId -> Handler Html
 getHomePage maybeUserId = do
@@ -101,6 +105,9 @@ getHomePage maybeUserId = do
         p $
           a ! href "http://localhost:3000/email-change-pass-page" $
             "change password for email login"
+        p $
+          a ! href "http://localhost:3000/email-reset-pass-send-email-page" $
+            "reset your password if you have forgotten it"
         h3 $ "All Posts"
         p $
           a ! href "http://localhost:3000/all-posts" $ "See all posts"
@@ -199,6 +206,38 @@ getEmailChangePassPage = do
           p $ do
             "new password"
             (input ! type_ "text" ! name "new-pass")
+          input ! type_ "submit" ! value "Submit"
+
+getEmailResetPassSendEmailPage :: Handler Html
+getEmailResetPassSendEmailPage = do
+  pure $
+    html $ do
+      head $ title "Example Servant App"
+      body $ do
+        h1 $ "Send Email to Reset Email Login Password"
+        form ! method "POST" ! action "/email/reset-password-send-email" $ do
+          p $ do
+            "email"
+            (input ! type_ "text" ! name "email")
+          input !
+            type_ "hidden" !
+            name "next" !
+            value "http://localhost:3000/email-reset-pass-page"
+          input ! type_ "submit" ! value "Submit"
+          p "You will be sent an email with a link allowing you to change you password."
+
+getEmailResetPassPage :: Handler Html
+getEmailResetPassPage = do
+  pure $
+    html $ do
+      head $ title "Example Servant App"
+      body $ do
+        h1 $ "Reset Email Login Password"
+        form ! method "POST" ! action "/email/reset-password" $ do
+          p $ do
+            "new password"
+            (input ! type_ "text" ! name "new-pass")
+          input ! type_ "hidden" ! name "next" ! value "http://localhost:3000/"
           input ! type_ "submit" ! value "Submit"
 
 runDb :: MonadIO m => SqlBackend -> ReaderT SqlBackend IO a -> m a
