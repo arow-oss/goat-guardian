@@ -32,7 +32,7 @@ import Database.Persist.TH (mkMigrate, mkPersist, mpsGenerateLenses, persistLowe
 import Network.HTTP.Conduit (HttpException, Manager, newManager, tlsManagerSettings)
 import Network.HTTP.ReverseProxy
 import Network.HTTP.Types.Header (hCookie, hLocation, hSetCookie)
-import Network.HTTP.Types.Status (Status, status200, status302, status400, status403, status404, status409, status500)
+import Network.HTTP.Types.Status (Status, status302, status400, status403, status404, status409, status500)
 import Network.HTTP.Types.URI (urlEncode)
 import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, requestHeaders, responseLBS)
 import Network.Wai.Handler.Warp
@@ -181,7 +181,7 @@ defaultMain = do
       Tona.run $ do
         TonaDb.runMigrate migrateAll
         (conf, shared) <- ask
-        let port = 3000
+        let port = 3000 :: Int
         $(logDebug) $ "Running Goat Guardian on port " <> tshow port <> "..."
         liftIO . run port . logStdoutDev $ app conf shared
 

@@ -254,6 +254,6 @@ defaultMain =
   runNoLoggingT $
     withSqliteConn "example-servant-app.sqlite3" $ \sqlBackend -> liftIO $ do
       runDb sqlBackend $ runMigration migrateAll
-      let port = 8000
+      let port = 8000 :: Int
       putStrLn $ "Running example-servant-app on port " <> show port <> "..."
       run port . logStdoutDev $ app sqlBackend
