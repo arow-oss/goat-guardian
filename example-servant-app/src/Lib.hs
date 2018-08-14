@@ -86,6 +86,7 @@ server sqlBackend =
 
 getHomePage :: Maybe UserId -> Handler Html
 getHomePage maybeUserId = do
+  -- liftIO $ "starting getHomePage"
   pure $
     html $ do
       head $ title "Example Servant App"
@@ -123,6 +124,8 @@ getAfterLogin sqlBackend userId = do
         h1 $ "Example Servant App for logged-in User"
         h3 $ "Logged In User"
         p $ toHtml $ "logged in as user: " <> show (unUserId userId)
+        p $
+          a ! href "http://localhost:3000/logout?next=http%3A%2F%2Flocalhost%3A3000" $ "logout"
         h3 $ "Create Blog Post"
         form ! method "POST" $ do
           p $ do
