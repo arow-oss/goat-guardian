@@ -51,7 +51,7 @@ import qualified Tonatona.Logger as TonaLogger
 import Web.Authenticate.OAuth (Credential(..), authorizeUrl, getAccessToken, getTemporaryCredential)
 import Web.ClientSession (decrypt, encryptIO, randomKey)
 import qualified Web.ClientSession as ClientSession
-import Web.Cookie (defaultSetCookie, parseCookies, renderCookies, renderSetCookie, setCookieHttpOnly, setCookieMaxAge, setCookieName, setCookiePath, setCookieValue)
+import Web.Cookie (SetCookie, defaultSetCookie, parseCookies, renderCookies, renderSetCookie, setCookieHttpOnly, setCookieMaxAge, setCookieName, setCookiePath, setCookieValue)
 import Web.Twitter.Conduit (OAuth(..), twitterOAuth)
 
 import GoatGuardian.CmdLineOpts (CmdLineOpts(..), RawSessionKey(..), initRawSessKeyOrFail, parseCmdLineOpts)
@@ -352,15 +352,29 @@ createCookie userKey = do
   let byteStringUserKey = userKeyToByteString userKey
   encryptedUserKey <- liftIO $ encryptIO key byteStringUserKey
   let setCookie =
-        defaultSetCookie
-          { setCookieName = "_GG_SESSION"
-          , setCookieValue = encryptedUserKey
-          , setCookiePath = Just "/"
-          , setCookieMaxAge = Just $ 60 * 60 * 24 * 3650 -- 10 years
-          , setCookieHttpOnly = True
+        defaultGGSetCookie
+          { setCookieValue = encryptedUserKey
           }
       rawSetCookie = toStrictByteString $ renderSetCookie setCookie
   pure rawSetCookie
+
+deleteCookie :: ByteString
+deleteCookie =
+  let setCookie =
+        defaultGGSetCookie
+          { setCookieValue = ""
+          }
+      rawSetCookie = toStrictByteString $ renderSetCookie setCookie
+  in rawSetCookie
+
+defaultGGSetCookie :: SetCookie
+defaultGGSetCookie =
+  defaultSetCookie
+    { setCookieName = "_GG_SESSION"
+    , setCookiePath = Just "/"
+    , setCookieMaxAge = Just $ 60 * 60 * 24 * 3650 -- 10 years
+    , setCookieHttpOnly = True
+    }
 
 data HandleProxyErr
   = HandleProxyNoCookies
@@ -389,13 +403,19 @@ handleProxy req = do
       $(logDebug) $ "handleProxy, maybeUserKey: " <> tshow maybeUserKey
       case maybeUserKey of
         Nothing -> do
+          $(logDebug) $ "handleProxy, got no user key"
           let withoutSessionCookie = filter (\(name, _) -> name /= "_GG_SESSION") cookies
               oldReqHeadersWithoutCookie =
-                filter (\(header, _) -> header /= hCookie) oldReqHeadersWithoutCookie
+                filter (\(header, _) -> header /= hCookie) oldReqHeadersWithoutUserId
               newCookieHeader =
                 (hCookie, toStrictByteString (renderCookies withoutSessionCookie))
               newHeaders = newCookieHeader : oldReqHeadersWithoutCookie
               newReq = req { requestHeaders = newHeaders }
+          $(logDebug) $ "handleProxy, withoutSessionCookie: " <> tshow withoutSessionCookie
+          $(logDebug) $ "handleProxy, oldReqHeadersWithoutCookie: " <> tshow oldReqHeadersWithoutCookie
+          $(logDebug) $ "handleProxy, newCookieHeader: " <> tshow newCookieHeader
+          $(logDebug) $ "handleProxy, newHeaders: " <> tshow newHeaders
+          $(logDebug) $ "handleProxy, newReq: " <> tshow newReq
           pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
         Just userKey -> do
           let withoutSessionCookie =
@@ -876,6 +896,17 @@ handleEmailResetPass req = do
               "</p>"
       in WPRResponse resp
 
+handleLogout :: Request -> Tona WaiProxyResponse
+handleLogout req = do
+  let maybeNext = join $ lookup "next" $ queryString req
+  url <- maybe (encodeUtf8 <$> readerConf redirAfterLoginUrl) pure maybeNext
+  let resp =
+        responseLBS
+          status302
+          [(hLocation, url), (hSetCookie, deleteCookie)]
+          mempty
+  pure $ WPRResponse resp
+
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
 
@@ -895,6 +926,7 @@ router req = do
     "email":"reset-password-send-email":_ -> handleEmailResetPassSendEmail req
     "email":"reset-password-login-with-token":_ -> handleEmailResetPassToken req
     "email":"reset-password":_ -> handleEmailResetPass req
+    "logout":_ -> handleLogout req
     _ -> handleProxy req
 
 app :: Config -> Shared -> Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
