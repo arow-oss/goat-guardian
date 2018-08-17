@@ -37,6 +37,45 @@ application all the way to right.  In general, this should be an application tha
 wants to authenticate users, but doesn't currently have any way to do
 authentication.
 
+## Quick Start
+
+First, you must download and build Goat Guardian.  You must have `git` and
+[`stack`](https://docs.haskellstack.org/en/latest/README/) installed to be able
+to do this:
+
+```sh
+$ git clone https://github.com/arow-oss/goat-guardian.git
+$ cd goat-guardian
+$ stack install
+```
+
+This should build and install Goat Guardian as a binary in
+`~/.local/bin/goat-guardian`.
+
+You can run it by running the binary, but there are some arguments you must
+specify either on the command line or as environment variables.
+
+Here is an example of running `goat-guardian` with all the required arguments:
+
+```sh
+$ goat-guardian \
+    --twitter-oauth-key Egex7CUsqQqSoEDjMivGtT1r0 \
+    --twitter-oauth-secret HCZPPaOmib64GP7QbQaEwrLwKswK8pQDe4UwsAS3EVJBupBj5l  \
+    --session-key DORwMBc0sSvGvIDutozVyNnJwU7qTknHkqFWUhpoAElJruHWT0GH7qmTpKajqIxbkuyTN5M5mb9CuM5JECg7SKadylr1QMeZqo1yPexd07KEdMKCbqdxJBmgHoTbBLL8 \
+    --redir-after-login-url http://localhost:3000/after-login \
+    --sqlite-conn-string example-db.sqlite3
+```
+
+An explanation of all the options available is in a following section.
+
+This command will run Goat Guardian on port 3000.  If you open up a web browser
+and open http://localhost:3000/twitter/login you will be redirected to twitter
+to login.
+
+Other ways of interacting with Goat Guardian will be explained in a following
+section.
+
+
 ## Origin
 
 Goat Guardian was originally proposed as a
