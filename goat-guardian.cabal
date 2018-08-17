@@ -27,7 +27,6 @@ library
                      , clientsession
                      , cookie
                      , email-validate
-                     , envy
                      , exceptions
                      , from-sum
                      , http-api-data
@@ -44,6 +43,7 @@ library
                      , scrypt
                      , text
                      , time
+                     , tonaparser
                      , tonatona
                      , tonatona-db-sqlite
                      , tonatona-email-sendmail

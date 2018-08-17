@@ -38,9 +38,9 @@ import Network.Wai (Request, Response, ResponseReceived, pathInfo, queryString, 
 import Network.Wai.Handler.Warp
 import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Network.Wai.Parse
-import System.Envy
 import Text.Email.Validate (isValid)
 import Text.Read (readMaybe)
+import TonaParser (FromEnv(..), (.||), argLong, env, envDef, envVar)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import qualified Tonatona.Db.Sqlite as TonaDb
@@ -117,10 +117,23 @@ data TwitterConfig = TwitterConfig
 
 instance FromEnv TwitterConfig where
   fromEnv = do
-    TwitterConfig
-      <$> envMaybe "GG_TWITTER_OAUTH_CALLBACK_URL" .!= "http://localhost:3000/twitter/callback"
-      <*> env "GG_TWITTER_OAUTH_KEY"
-      <*> env "GG_TWITTER_OAUTH_SECRET"
+    let callback =
+          envDef
+            ( envVar "GG_TWITTER_OAUTH_CALLBACK_URL" .||
+              argLong "twitter-oauth-callback"
+            )
+            "http://localhost:3000/twitter/callback"
+        key =
+          env
+            ( envVar "GG_TWITTER_OAUTH_KEY" .||
+              argLong "twitter-oauth-key"
+            )
+        secret =
+          env
+            ( envVar "GG_TWITTER_OAUTH_SECRET" .||
+              argLong "twitter-oauth-secret"
+            )
+    TwitterConfig <$> callback <*> key <*> secret
 
 data Config = Config
   { tonaDb :: TonaDb.Config
@@ -132,11 +145,13 @@ data Config = Config
 
 instance FromEnv Config where
   fromEnv =
-    Config
-      <$> fromEnv
-      <*> fromEnv
-      <*> fromEnv
-      <*> envMaybe "GG_REDIR_AFTER_LOGIN_URL" .!= "http://localhost:3000"
+    let redirAfterLogin =
+          envDef
+            ( envVar "GG_REDIR_AFTER_LOGIN_URL" .||
+              argLong "redir-after-login-url"
+            )
+            "http://localhost:3000"
+    in Config <$> fromEnv <*> fromEnv <*> fromEnv <*> redirAfterLogin
 
 instance TonaDb.HasConfig Config where
   config = tonaDb

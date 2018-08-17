@@ -10,7 +10,7 @@ import qualified Data.ByteString.Base64 as Base64
 import Data.Semigroup (Semigroup, (<>))
 import Data.String (IsString)
 import Options.Applicative (Parser, (<**>), execParser, fullDesc, header, help, helper, info, long, short, switch)
-import System.Envy (FromEnv(..), env)
+import TonaParser (FromEnv(..), (.||), argLong, env, envVar)
 import Web.ClientSession (Key, initKey)
 
 data RawSessionKey = RawSessionKey { unRawSessionKey :: ByteString }
@@ -35,16 +35,16 @@ instance Show RawSessionKey where
 
 instance FromEnv RawSessionKey where
   fromEnv = do
-    b64SessKey <- env "GG_SESSION_KEY"
+    b64SessKey <- env (envVar "GG_SESSION_KEY" .|| argLong "session-key")
     let eitherB64SessKey = Base64.decode b64SessKey
     case eitherB64SessKey of
       Left _ ->
-        throwError $
+        error $
           "Could not base64-decode the GG_SESSION_KEY.\n\n" <> createNewKeyMsg
       Right sessKey -> do
         if ByteString.length sessKey /= 96
           then
-            throwError $
+            error $
               "The base64-decoded GG_SESSION_KEY is not exactly 96 bytes.\n\n" <>
               createNewKeyMsg
           else pure $ RawSessionKey b64SessKey

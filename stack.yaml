@@ -43,8 +43,9 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps:
     - git: git@github.com:arow-oss/tonatona
-      commit: 3f8ade02896056e07db097aca326693eaf428a53
+      commit: ff4a2b283917501ab2a693ec2dfb7eb734de1306
       subdirs:
+        - tonaparser
         - tonatona
         - tonatona-db-sqlite
         - tonatona-email-sendmail
