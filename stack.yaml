@@ -43,7 +43,7 @@ packages:
 # (e.g., acme-missiles-0.3)
 extra-deps:
     - git: git@github.com:arow-oss/tonatona
-      commit: ff4a2b283917501ab2a693ec2dfb7eb734de1306
+      commit: 7cf09c3ba67d6748bf8429ce9cc339960505ceda
       subdirs:
         - tonaparser
         - tonatona

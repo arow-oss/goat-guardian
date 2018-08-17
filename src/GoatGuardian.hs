@@ -40,7 +40,7 @@ import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Network.Wai.Parse
 import Text.Email.Validate (isValid)
 import Text.Read (readMaybe)
-import TonaParser (FromEnv(..), (.||), argLong, env, envDef, envVar)
+import TonaParser (FromEnv(..), ParserRenames(ParserRenames, envVarRenames), (.||), argLong, env, envDef, envVar, fromEnvWithRenames)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import qualified Tonatona.Db.Sqlite as TonaDb
@@ -151,7 +151,12 @@ instance FromEnv Config where
               argLong "redir-after-login-url"
             )
             "http://localhost:3000"
-    in Config <$> fromEnv <*> fromEnv <*> fromEnv <*> redirAfterLogin
+        db =
+          fromEnvWithRenames
+            ParserRenames
+              { envVarRenames = [("TONA_DB_SQLITE_CONN_STRING", "GG_SQLITE_CONN_STRING")]
+              }
+    in Config <$> db <*> fromEnv <*> fromEnv <*> redirAfterLogin
 
 instance TonaDb.HasConfig Config where
   config = tonaDb
