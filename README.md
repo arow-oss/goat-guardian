@@ -72,9 +72,101 @@ This command will run Goat Guardian on port 3000.  If you open up a web browser
 and open http://localhost:3000/twitter/login you will be redirected to twitter
 to login.
 
+Accessing any other URL will be reverse-proxied to your upstream web app.
+By default Goat Guardian assumes this is at http://localhost:8000/.
+
+For example, if you access http://localhost:3000/some/other/path, Goat Guardian
+will reverse proxy the request to http://localhost:8000/some/other/path.
+Your upstream web app will need to respond to this request.
+
+If the end-user has logged in with Goat Guardian, Goat Guardian will add a
+header `X-UserId`.  The value of the header should be an integer that
+corresponds to the ID of the end-user.  An example value will be something like
+`1` or `999`. Your upstream web app needs to check for this header upon
+receiving a request in order to figure out whether the user has logged in or
+not.
+
 Other ways of interacting with Goat Guardian will be explained in a following
 section.
 
+## Authentication
+
+Goat Guardian provides multiple ways to perform authentication.  Currently the following are suppored:
+
+- Twitter OAuth
+- Email-based login
+
+An explanation of how to use each authentication method is provided in the
+following sections.
+
+### Twitter OAuth
+
+Twitter OAuth lets the end-user use Twitter to login to your application.
+
+The login flow with twitter is as follows:
+
+1. Direct the end-user to `/twitter/login` on Goat Guardian.  (By default, this
+   will be http://localhost:3000/twitter/login.)
+
+1. Goat Guardian will redirect the the end-user to twitter.com to login.
+
+1. When the user logins in with Twitter, they will be redirected back to
+   `/twitter/callback` on Goat Guardian.  Goat Guardian will create a user ID
+   in its database.
+
+1. Goat Guardian will redirect the end-user to `/after-login` (unless it has
+   been changed by a command line option).
+
+1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
+   add the `X-UserId` header and reverse proxy the request to the upstream web
+   app.
+
+The command options and environment variables that affect Twitter OAuth are
+listed in a following section.
+
+### Email-based login
+
+Email-based login is quite complicated compared to the other authentication
+methods.
+
+Email-based login is actually broken down into multiple flows.  The flows are as follows:
+
+1. Registering a new email address
+1. Login with an email address that has already been registered
+1. Changing the password if the end-user already know the current password.
+1. Resetting the password
+
+Each of these flows is explained in detail in the following sections.
+
+#### Registering a new email address
+
+The flow for registering a new email address is described below:
+
+1. The upstream web app must prepare a page with an HTML form asking the user
+   for their email adress and a password to use for Goat Guardian.
+
+   It must set the `action` of the form to `POST` and the action to
+   `/email/register` for Goat Guardian.  It must have two inputs, with the name
+   `email` and `password`.
+
+1. When the end-user submits this form, Goat Guardian will intercept this
+   request and send an email to the end-user asking them to confirm their email
+   address.
+
+1. When the end-user confirms their email address, they will be redirected to
+   `/`.  They can now login.
+
+#### Login with an email address that has already been registered
+
+
+
+#### Login with an email address that has already been registered
+
+#### Changing the password if the end-user already knows the current password
+
+#### Resetting the password
+
+## Options
 
 ## Origin
 
