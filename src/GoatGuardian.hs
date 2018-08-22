@@ -154,7 +154,7 @@ instance FromEnv Config where
         db =
           fromEnvWithRenames
             defParserRenames
-              { envVarRenames = [("TONA_DB_SQLITE_CONN_STRING", "GG_SQLITE_CONN_STRING")]
+              { envVarRenames = [("DB_CONN_STRING", "GG_DB_CONN_STRING")]
               }
     in Config <$> db <*> fromEnv <*> fromEnv <*> redirAfterLogin
 
