@@ -259,6 +259,8 @@ Command Line Flag | Environment Variable | Default | Description
 
 ## Example App
 
+There is an example Servant application implementing all of the authentiation flows described above.  You can find it in the [example-servant-app](./example-servant-app/) directory.
+
 ## Origin
 
 Goat Guardian was originally proposed as a
