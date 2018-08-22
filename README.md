@@ -112,7 +112,7 @@ The login flow with twitter is as follows:
 
 1. When the user logins in with Twitter, they will be redirected back to
    `/twitter/callback` on Goat Guardian.  Goat Guardian will create a user ID
-   in its database.
+   in its database, and create a session cookie for the end-user.
 
 1. Goat Guardian will redirect the end-user to `/after-login` (unless it has
    been changed by a command line option).
@@ -142,7 +142,7 @@ Each of these flows is explained in detail in the following sections.
 
 The flow for registering a new email address is described below:
 
-1. The upstream web app must prepare a page with an HTML form asking the user
+1. The upstream web app must prepare a page with an HTML form asking the end-user
    for their email adress and a password to use for Goat Guardian.
 
    It must set the `action` of the form to `POST` and the action to
@@ -154,19 +154,105 @@ The flow for registering a new email address is described below:
    address.
 
 1. When the end-user confirms their email address, they will be redirected to
-   `/`.  They can now login.
+   `/`.  They are now able to login.
 
 #### Login with an email address that has already been registered
 
+The flow for logging in with an email address that has already been registered
+and confirmed is described below:
 
+1. The upstream web app must prepare a page with an HTML form asking the end-user
+   for their email adress and a password:
 
-#### Login with an email address that has already been registered
+   It must set the `action` of the form to `POST` and the action to
+   `/email/login` for Goat Guardian.  It must have two inputs, with the name
+   `email` and `password`.
+
+1. When the end-user submis this form, Goat Guardian will intercep this request
+   and check the end-user's email and password.  If it is correct, Goat Guardian will
+   set a session cookie and redirect the end-user to `/after-login` (unless it has
+   been changed by a command line option).
+
+1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
+   add the `X-UserId` header and reverse proxy the request to the upstream web
+   app.
 
 #### Changing the password if the end-user already knows the current password
 
+The flow for changing the password for the end-user if the current password is known is described below:
+
+1. The upstream web app must prepare a page with an HTML form asking the end-user
+   for their current password and the new password to use.
+
+   It must set the `action` of the form to `POST` and the action to
+   `/email/change-password` for Goat Guardian.  It must have two inputs, with the name
+   `old-pass` and `new-pass`.
+
+1. When the end-user submis this form, Goat Guardian will intercep this request
+   and check the end-user's current password.  If it is correct, Goat Guardian will
+   change the password and redirect the end-user to `/after-login` (unless it has
+   been changed by a command line option).
+
+1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
+   add the `X-UserId` header and reverse proxy the request to the upstream web
+   app.
+
 #### Resetting the password
 
+Resetting a password involves sending the end-user an email to confirm who they
+are.  The flow is as follows:
+
+1. The upstream web app must prepare a page with an HTML form asking the end-user
+   for their current password and the new password to use.
+
+   It must set the `action` of the form to `POST` and the action to
+   `/email/reset-password-send-email` for Goat Guardian.  It must have two inputs, with the name
+   `email` and `next`.  `next` is the URL that Goat Guardian will forward the
+   end-user to in order to set their new password.  It is used in step 3.
+   It could be something like `http://localhost:3000/email-reset-pass-page`.
+
+1. When the end-user submits this form, Goat Guardian will intercept this
+   request and send an email to the end-user asking them to confirm their email
+   address.
+
+1. When the end-user confirms their email address, they will be logged-in and
+   redirected to the URL specified in the `next` argument in step 1.  The HTTP
+   Header `X-UserId` will be set to their user ID.  This page should be an HTML
+   form asking the end-user for the new password to use.
+
+   It must set the `action` of the form to `POST` and the action to
+   `/email/reset-password` for Goat Guardian.  It must have two inputs, with
+   the name `new-pass` and `next`.  `next` is the URL that Goat Guardian will
+   forward the end-user to after changing their password.  It is used in the next
+   step.  It could be something like `http://localhost:3000`.
+
+1. When the end-user submits this form, Goat Guardian will change the password
+   of the end-user and forward them to the URL in the `next` parameter.
+
+### Other Endpoints
+
+There are a few other endpoints provided by Goat Guardian.  They are described below.
+
+#### Logout
+
+Goat Guardian provides an endpoint that lets the end-user logout.  The flow for using this is described below:
+
+1. Have the end-user send a request to `/logout` with a query parameter called `next`.  `next` will be the URL to redirect the end-user to after logging them out.
+
+1. Goat Guardian will intercept this request and delete the session cookie for
+   the end-user.  Goat Guardian will then redirect the end-user to the URL from
+   the `next` parameter.  Since the end-user has been logged out, Goat Guardian
+   will not set the `X-UserId` HTTP header.
+
 ## Options
+
+This section lists all the options that can be specified to Goat Guardian.
+
+Command Line Flag | Environment Variable | Description
+----------------- | -------------------- | -----------
+--
+
+## Example App
 
 ## Origin
 
