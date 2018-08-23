@@ -9,11 +9,14 @@ Goat Guardian is a reverse-proxy authentication server.  You can run it in
 front of an existing web application.  It will handle all authentication,
 including OAuth and email-based login.
 
-Goat guardian is meant to make it easy to add support for authentication to
+Goat Guardian is meant to make it easy to add support for authentication to
 your web application.  It works great for demos, prototypes, internal web
-applications, rapid development with a small team.  It even works well for
+applications, and rapid development with a small team.  It even works well for
 larger applications and teams that want an easy way to implement multiple forms
 of authentication!
+
+Goat Guardian can be used in front of web applications written in any
+language/framework.
 
 ## Introduction
 
