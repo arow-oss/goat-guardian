@@ -31,7 +31,7 @@ Goat Guardian received requests from the end-user.  If it is a request to
 authenticate, Goat Guardian will directly handle it.  If it is any other
 request, it will be forwarded to your web application.
 
-## Language
+## Terminology used in this document
 
 In this document, *end-user* will be used to refer to to the user of the web
 application.  In the diagram above, it is the blue guy all the way to the left.
