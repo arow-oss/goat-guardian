@@ -116,7 +116,7 @@ The login flow with twitter is as follows:
 1. Direct the end-user to `/twitter/login` on Goat Guardian.  (By default, this
    will be http://localhost:3000/twitter/login.)
 
-1. Goat Guardian will redirect the the end-user to twitter.com to login.
+1. Goat Guardian will redirect the end-user to twitter.com to login.
 
 1. When the user logins in with Twitter, they will be redirected back to
    `/twitter/callback` on Goat Guardian.  Goat Guardian will create a user ID
