@@ -42,7 +42,7 @@ packages:
 # Dependency packages to be pulled from upstream that are not in the resolver
 # (e.g., acme-missiles-0.3)
 extra-deps:
-    - git: git@github.com:arow-oss/tonatona
+    - git: https://github.com/arow-oss/tonatona.git
       commit: 7cf09c3ba67d6748bf8429ce9cc339960505ceda
       subdirs:
         - tonaparser
