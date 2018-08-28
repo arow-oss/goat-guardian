@@ -269,13 +269,27 @@ Command Line Flag | Environment Variable | Default | Description
 
 ## Example App
 
-There is an example Servant application implementing all of the authentiation flows described above.  You can find it in the [example-servant-app](./example-servant-app/) directory.
+There is an example Servant application implementing all of the authentication flows described above.  You can find it in the [example-servant-app](./example-servant-app/) directory.
 
-## Origin
+## Future Work
 
-Goat Guardian was originally proposed as a
-[question](https://security.stackexchange.com/questions/187191/would-a-reverse-proxy-authentication-server-be-a-secure-setup/187219)
-on the Information Security Stack Exchange.
+There are many features we would like to add to Goat Guardian at some point.
+The following are just a small taste.  You can find many more features on the
+[issue tracker](https://github.com/arow-oss/goat-guardian/issues).
+
+- Support other OAuth providers like Google, Github, and Facebook (#1)
+
+- Provide a way for Goat Guardian to store user data in a database other than SQLite (#14)
+
+- Allow Goat Guardian settings to be specified in a configuration file (#17)
+
+- Specify "routing-rules" for Goat Guardian, in order to serve static files as
+  well as a web application (#18)
+
+- Make Goat Guardian completely programmable, by providing it as a Haskell
+  library (instead of only as a standalone executable).  Eventually we also
+  want to provide access to it as a C library, so that it can be programmed
+  from any programming language, including Python, Ruby, Java, etc.
 
 ## Maintainers
 
