@@ -269,7 +269,9 @@ Command Line Flag | Environment Variable | Default | Description
 
 ## Example App
 
-There is an example Servant application implementing all of the authentication flows described above.  You can find it in the [example-servant-app](./example-servant-app/) directory.
+There is an example Servant application implementing all of the authentication
+flows described above.  You can find it in the
+[example-servant-app](./example-servant-app/) directory.
 
 ## Future Work
 
