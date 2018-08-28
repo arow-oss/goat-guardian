@@ -5,6 +5,8 @@
 [![Stackage LTS](http://stackage.org/package/goat-guardian/badge/lts)](http://stackage.org/lts/package/goat-guardian)
 [![Stackage Nightly](http://stackage.org/package/goat-guardian/badge/nightly)](http://stackage.org/nightly/package/goat-guardian)
 
+![sakura-chan behind gate](./img/goat-guardian.png)
+
 Goat Guardian is a reverse-proxy authentication server.  You can run it in
 front of an existing web application.  It will handle all authentication,
 including OAuth and email-based login.
