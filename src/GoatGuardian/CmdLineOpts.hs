@@ -3,7 +3,6 @@
 
 module GoatGuardian.CmdLineOpts where
 
-import Control.Monad.Except (throwError)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Base64 as Base64
