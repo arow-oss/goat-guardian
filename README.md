@@ -56,7 +56,7 @@ to do this:
 ```sh
 $ git clone https://github.com/arow-oss/goat-guardian.git
 $ cd goat-guardian
-$ stack install
+$ stack install goat-guardian
 ```
 
 This should build and install Goat Guardian as a binary in
