@@ -291,6 +291,60 @@ The following are just a small taste.  You can find many more features on the
   want to provide access to it as a C library, so that it can be programmed
   from any programming language, including Python, Ruby, Java, etc.
 
+## Related Software
+
+There are a few existing programs that have a similar feature set to Goat
+Guardian: login-with, oauth2_proxy, and kong.  This section compares them to Goat Guardian.
+
+### login-with
+
+[login-with](https://github.com/lipp/login-with) is similar to Goat
+Guardian.  It acts as a "authentication microservice".  It gives an easy way to
+implement authentication in a microservice architecture.
+
+Here are some differences with Goat Guardian:
+
+- Goat Guardian is meant to be used as a reverse-proxy server.  It should sit in front of your normal web application.  It abstracts away the need to worry about authentication in your application.  However, login-with is just another microservice in your microservice-architecture.  Your web application will need to handle the JWT that login-with produces.
+
+- login-with doesn't handle email-based login.  Goat Guardian does.
+
+- login-with can't be run under http (instead of https) for testing.
+
+- The documentation for login-with is lacking.  Manual testing is required to
+  figure out exactly how login-with operates.  If you find the documentation
+  for Goat Guardian lacking in any regard, please open an issue or send a PR.
+
+- login-with can't be used programmatically in Haskell, Python, Ruby, Java, etc.
+
+### oauth2_proxy
+
+[oauth2_proxy](https://github.com/bitly/oauth2_proxy) is very similar to Goat Guardian.  It acts as a reverse proxy in the same way as Goat Guardian.
+
+Here are some differences with Goat Guardian.
+
+- oauth2_proxy doesn't handle email-based registration and login.  Goat Guardian does.
+
+- The documentation for oauth2_proxy is somewhat lacking.  If you find the documentation
+  for Goat Guardian lacking in any regard, please open an issue or send a PR.
+
+- oauth2_proxy only allows you to use one OAuth provider at a time.  Goat
+  Guardian allows you to use any that have been configured.
+
+- login-with can't be used programmatically in Haskell, Python, Ruby, Java, etc.
+
+### Kong
+
+[Kong](https://konghq.com/) is an API gateway.  It acts as a reverse proxy in
+the same way as Goat Guardian, but it handles much more than just
+authentication.  It also handles monitoring, logging, rate-limiting, etc.
+
+Here are some differences with Goat Guardian.
+
+- Kong is enterprise-ready and much more difficult to configure than Goat Guardian.
+
+- Kong doesn't really abstract away the need to handle authentication in your
+  own web application.
+
 ## Maintainers
 
 - [Kadzuya Okamoto](https://github.com/arowM)
