@@ -279,17 +279,22 @@ The following are just a small taste.  You can find many more features on the
 
 - Support other OAuth providers like Google, Github, and Facebook (#1)
 
+- Allow a user to login with *either* email or OAuth and link the accounts.
+
 - Provide a way for Goat Guardian to store user data in a database other than SQLite (#14)
 
 - Allow Goat Guardian settings to be specified in a configuration file (#17)
 
 - Specify "routing-rules" for Goat Guardian, in order to serve static files as
-  well as a web application (#18)
+  well as a web application.  This could also be used to allow Goat Guardian to
+  reverse proxy for multiple web applications, so that users could easy login to
+  multiple related microservices (#18)
 
 - Make Goat Guardian completely programmable, by providing it as a Haskell
   library (instead of only as a standalone executable).  Eventually we also
   want to provide access to it as a C library, so that it can be programmed
   from any programming language, including Python, Ruby, Java, etc.
+
 
 ## Related Software
 
@@ -304,7 +309,11 @@ implement authentication in a microservice architecture.
 
 Here are some differences with Goat Guardian:
 
-- Goat Guardian is meant to be used as a reverse-proxy server.  It should sit in front of your normal web application.  It abstracts away the need to worry about authentication in your application.  However, login-with is just another microservice in your microservice-architecture.  Your web application will need to handle the JWT that login-with produces.
+- Goat Guardian is meant to be used as a reverse-proxy server.  It should sit
+  in front of your normal web application.  It abstracts away the need to worry
+  about authentication in your application.  However, login-with is just
+  another microservice in your microservice-architecture.  Your web application
+  will need to handle the JWT that login-with produces.
 
 - login-with doesn't handle email-based login.  Goat Guardian does.
 
