@@ -15,7 +15,7 @@ import Control.Monad.Except (ExceptT(ExceptT), runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask)
 import Control.Monad.Trans.Class (lift)
-import Control.FromSum (fromMaybeM)
+import Control.FromSum (fromEitherM, fromMaybeM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import Data.ByteString.Lazy (toStrict)
@@ -140,24 +140,17 @@ data Config = Config
   { tonaDb :: TonaDb.Config
   , twitterConfig :: TwitterConfig
   , rawSessionKey :: RawSessionKey
-  , redirAfterLoginUrl :: Text
   }
   deriving (Show)
 
 instance FromEnv Config where
   fromEnv =
-    let redirAfterLogin =
-          envDef
-            ( envVar "GG_REDIR_AFTER_LOGIN_URL" .||
-              argLong "redir-after-login-url"
-            )
-            "http://localhost:3000"
-        db =
+    let db =
           fromEnvWithRenames
             defParserRenames
               { envVarRenames = [("TONA_DB_SQLITE_CONN_STRING", "GG_SQLITE_CONN_STRING")]
               }
-    in Config <$> db <*> fromEnv <*> fromEnv <*> redirAfterLogin
+    in Config <$> db <*> fromEnv <*> fromEnv
 
 instance TonaDb.HasConfig Config where
   config = tonaDb
@@ -206,6 +199,11 @@ defaultMain = do
         $(logDebug) $ "Running Goat Guardian on port " <> tshow port <> "..."
         liftIO . run port . logStdoutDev $ app conf shared
 
+data TwitterLoginErr
+  = TwitterLoginHttpEx
+  | TwitterLoginMissingCreds
+  | TwitterLoginNotConfirmed
+
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin _req = do
   $(logDebug) $ "handleTwitterLogin, started..."
@@ -217,55 +215,62 @@ handleTwitterLogin _req = do
           , oauthCallback = Just $ twitterOAuthCallbackUrl twitConf
           }
   manager <- readerShared httpManager
-  $(logDebug) $ "handleTwitterLogin, about to run getTemporaryCredential..."
-  eitherCred <- try $ getTemporaryCredential tokens manager
-  $(logDebug) $ "handleTwitterLogin, eitherCred: " <> tshow eitherCred
-  case eitherCred of
-    Left (_err :: HttpException) -> do
+  eitherResp <-
+    runExceptT $ do
+      $(logDebug) $ "handleTwitterLogin, about to run getTemporaryCredential..."
+      eitherCred <- try $ getTemporaryCredential tokens manager
+      $(logDebug) $ "handleTwitterLogin, eitherCred: " <> tshow eitherCred
+      Credential creds <- fromEitherM (const $ throwError TwitterLoginHttpEx) eitherCred
+      let maybeCredRes = do
+            confirmed <- lookup "oauth_callback_confirmed" creds
+            token <- lookup "oauth_token" creds
+            secret <- lookup "oauth_token_secret" creds
+            pure (confirmed, token, secret)
+      credRes <- fromMaybeM (throwError TwitterLoginMissingCreds) maybeCredRes
+      (token, secret) <-
+        case credRes of
+          ("true", token, secret) -> pure (token, secret)
+          _ -> throwError TwitterLoginNotConfirmed
+      $(logDebug) "handleTwitterLogin, successfully looked up values"
+      -- TODO: It might be possible just to encrypt these values
+      -- and return them to the user in a cookie that we can read
+      -- later.
+      lift $
+        TonaDb.run $ do
+          let textToken = decodeUtf8With lenientDecode token
+              textSecret = decodeUtf8With lenientDecode secret
+          deleteWhere [TwitterTemporaryTokenToken ==. textToken]
+          insert_ (TwitterTemporaryToken textToken textSecret)
+      let url = authorizeUrl tokens (Credential creds)
+      let bytestringUrl = encodeUtf8 $ pack url
+      $(logDebug) $ "handleTwitterLogin, url: " <> tshow url
+      let resp = responseLBS status302 [(hLocation, bytestringUrl)] mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left TwitterLoginHttpEx -> do
       let resp =
             responseLBS
               status500
               []
               "<p>could not access Twitter to get temporary credentials</p>"
       pure $ WPRResponse resp
-    Right (Credential creds) -> do
-      let maybeCredRes = do
-            confirmed <- lookup "oauth_callback_confirmed" creds
-            token <- lookup "oauth_token" creds
-            secret <- lookup "oauth_token_secret" creds
-            pure (confirmed, token, secret)
-      case maybeCredRes of
-        Nothing -> do
-          $(logDebug) "handleTwitterLogin, couldn't find values"
-          let resp =
-                responseLBS
-                  status500
-                  []
-                  "<p>could not find Twitter oauth_* values in temporary credential call</p>"
-          pure $ WPRResponse resp
-        Just ("true", token, secret) -> do
-          $(logDebug) "handleTwitterLogin, successfully looked up values"
-          -- TODO: It might be possible just to encrypt these values
-          -- and return them to the user in a cookie that we can read
-          -- later.
-          TonaDb.run $ do
-            let textToken = decodeUtf8With lenientDecode token
-                textSecret = decodeUtf8With lenientDecode secret
-            deleteWhere [TwitterTemporaryTokenToken ==. textToken]
-            insert_ (TwitterTemporaryToken textToken textSecret)
-          let url = authorizeUrl tokens (Credential creds)
-          let bytestringUrl = encodeUtf8 $ pack url
-          $(logDebug) $ "handleTwitterLogin, url: " <> tshow url
-          let resp = responseLBS status302 [(hLocation, bytestringUrl)] mempty
-          pure $ WPRResponse resp
-        _ -> do
-          $(logDebug) "handleTwitterLogin, response from twitter didn't have oauth_callback_confirmed"
-          let resp =
-                responseLBS
-                  status500
-                  []
-                  "<p>response from twitter didn't have oauth_callback_confirmed set to true</p>"
-          pure $ WPRResponse resp
+    Left TwitterLoginMissingCreds -> do
+      $(logDebug) "handleTwitterLogin, couldn't find values"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>could not find Twitter oauth_* values in temporary credential call</p>"
+      pure $ WPRResponse resp
+    Left TwitterLoginNotConfirmed -> do
+      $(logDebug) "handleTwitterLogin, response from twitter didn't have oauth_callback_confirmed"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>response from twitter didn't have oauth_callback_confirmed set to true</p>"
+      pure $ WPRResponse resp
+    Right resp -> pure resp
 
 handleTwitterCallback :: Request -> Tona WaiProxyResponse
 handleTwitterCallback req = do
