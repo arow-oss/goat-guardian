@@ -2,6 +2,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -41,6 +42,7 @@ import Network.Wai.Parse
 import Text.Email.Validate (isValid)
 import Text.Read (readMaybe)
 import TonaParser (FromEnv(..), ParserRenames(ParserRenames, envVarRenames), (.||), argLong, defParserRenames, env, envDef, envVar, fromEnvWithRenames)
+-- import TonaParser (FromEnv(..), (.||), argLong, defParserRenames, env, envDef, envVar, envVarRenames, fromEnvWithRenames)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import qualified Tonatona.Db.Sqlite as TonaDb
