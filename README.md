@@ -86,7 +86,7 @@ Accessing any other URL will be reverse-proxied to your upstream web app.
 By default Goat Guardian assumes this is at http://localhost:8000/.
 
 For example, if you access http://localhost:3000/some/other/path, Goat Guardian
-will reverse proxy the request to http://localhost:8000/some/other/path.
+will reverse-proxy the request to http://localhost:8000/some/other/path.
 Your upstream web app will need to respond to this request.
 
 If the end-user has logged in with Goat Guardian, Goat Guardian will add a
@@ -128,7 +128,7 @@ The login flow with twitter is as follows:
    been changed by a command line option).
 
 1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
-   add the `X-UserId` header and reverse proxy the request to the upstream web
+   add the `X-UserId` header and reverse-proxy the request to the upstream web
    app.
 
 The command options and environment variables that affect Twitter OAuth are
@@ -184,7 +184,7 @@ and confirmed is described below:
    been changed by a command line option).
 
 1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
-   add the `X-UserId` header and reverse proxy the request to the upstream web
+   add the `X-UserId` header and reverse-proxy the request to the upstream web
    app.
 
 #### Changing the password if the end-user already knows the current password
@@ -204,7 +204,7 @@ The flow for changing the password for the end-user if the current password is k
    been changed by a command line option).
 
 1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
-   add the `X-UserId` header and reverse proxy the request to the upstream web
+   add the `X-UserId` header and reverse-proxy the request to the upstream web
    app.
 
 #### Resetting the password
@@ -338,7 +338,8 @@ Here are some differences with Goat Guardian:
 
 ### oauth2_proxy
 
-[oauth2_proxy](https://github.com/bitly/oauth2_proxy) is very similar to Goat Guardian.  It acts as a reverse proxy in the same way as Goat Guardian.
+[oauth2_proxy](https://github.com/bitly/oauth2_proxy) is very similar to Goat
+Guardian.  It acts as a reverse-proxy in the same way as Goat Guardian.
 
 Here are some differences with Goat Guardian.
 
@@ -350,11 +351,21 @@ Here are some differences with Goat Guardian.
 - oauth2_proxy only allows you to use one OAuth provider at a time.  Goat
   Guardian allows you to use any that have been configured.
 
-- login-with can't be used programmatically in Haskell, Python, Ruby, Java, etc.
+- oauth2_proxy can't be used programmatically in Haskell, Python, Ruby, Java, etc.
+
+- oauth2_proxy doesn't have any way to reverse-proxy endpoints if the end-user
+  hasn't already loggedin.  Goat Guardian lets the upstream application decide
+  which pages to show based on whether or not the end-user has already logged
+  in.
+
+- oauth2_proxy is mainly used to make internal web applications (for example, a
+  self hosted version of [Tiny Tiny RSS](https://tt-rss.org/)) available behind
+  OAuth authorization.  Goat Guardian is mainly intended to be used for public
+  web applications meant to be used by the general public.
 
 ### Kong
 
-[Kong](https://konghq.com/) is an API gateway.  It acts as a reverse proxy in
+[Kong](https://konghq.com/) is an API gateway.  It acts as a reverse-proxy in
 the same way as Goat Guardian, but it handles much more than just
 authentication.  It also handles monitoring, logging, rate-limiting, etc.
 
