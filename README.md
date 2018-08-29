@@ -269,9 +269,14 @@ Command Line Flag | Environment Variable | Default | Description
 
 ## Example App
 
-There is an example Servant application implementing all of the authentication
-flows described above.  You can find it in the
-[example-servant-app](./example-servant-app/) directory.
+There are example web applications implementing all of the authentication flows
+described above.
+
+- [example Haskell web application using the Servant framework](./example-servant-app/)
+
+(Currently there is only one example application, but we hope to add more.
+Please feel free to send a PR adding an example for your favorite language and
+framework.)
 
 ## Future Work
 
