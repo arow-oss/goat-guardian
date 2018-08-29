@@ -292,16 +292,20 @@ The following are just a small taste.  You can find many more features on the
 
 - Allow Goat Guardian settings to be specified in a configuration file (#17)
 
-- Specify "routing-rules" for Goat Guardian, in order to serve static files as
-  well as a web application.  This could also be used to allow Goat Guardian to
-  reverse proxy for multiple web applications, so that users could easy login to
-  multiple related microservices (#18)
+- Specify "routing-rules" for Goat Guardian (#18).  There are multiple uses for this:
+
+    - Serve static files as from a completely different server.
+    - Serve different routes from different microservices.  For instance,
+      requests to `/users/*` could be routed to one microservice, while
+      requests to `/groups/*` could be routed to a different microservice.
+    - Allow easy migration from a legacy system to a new system.  For instance,
+      requests to `/v2/*` are directed to a new web application, while all other
+      requests are handled by the legacy web application.
 
 - Make Goat Guardian completely programmable, by providing it as a Haskell
   library (instead of only as a standalone executable).  Eventually we also
   want to provide access to it as a C library, so that it can be programmed
   from any programming language, including Python, Ruby, Java, etc.
-
 
 ## Related Software
 
