@@ -679,6 +679,7 @@ handleEmailLogin req = do
 data EmailChangePassErr
   = EmailChangePassNoCookies
   | EmailChangePassNoNewPassParam
+  | EmailChangePassNoNextParam
   | EmailChangePassNoOldPassParam
   | EmailChangePassNoSessCookie
   | EmailChangePassOldPassIncorrect
@@ -697,6 +698,7 @@ handleEmailChangePass req = do
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeOldPass = lookup "old-pass" params
       maybeNewPass = lookup "new-pass" params
+      maybeNext = lookup "next" params
   eitherResp <-
     runExceptT $ do
       cookies <- fromMaybeM (throwError EmailChangePassNoCookies) maybeCookies
@@ -710,6 +712,7 @@ handleEmailChangePass req = do
       userKey <- fromMaybeM (throwError EmailChangePassSessCookieIncorrect) maybeUserKey
       byteStringOldPass <- fromMaybeM (throwError EmailChangePassNoOldPassParam) maybeOldPass
       byteStringNewPass <- fromMaybeM (throwError EmailChangePassNoNewPassParam) maybeNewPass
+      next <- fromMaybeM (throwError EmailChangePassNoNextParam) maybeNext
       let oldPass = decodeUtf8With lenientDecode byteStringOldPass
       let newPass = decodeUtf8With lenientDecode byteStringNewPass
       maybeEmailEnt <-
@@ -722,9 +725,7 @@ handleEmailChangePass req = do
       newHashedPass <- hashPass newPass
       let newEmailEnt = emailEnt { emailHashedPass = newHashedPass }
       lift $ TonaDb.run $ repsert emailKey newEmailEnt
-      url <- lift $ readerConf redirAfterLoginUrl
-      let byteStringUrl = encodeUtf8 url
-          resp = responseLBS status302 [(hLocation, byteStringUrl)] mempty
+      let resp = responseLBS status302 [(hLocation, next)] mempty
       pure $ WPRResponse resp
   case eitherResp of
     Left EmailChangePassNoCookies ->

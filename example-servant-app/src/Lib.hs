@@ -213,6 +213,10 @@ getEmailChangePassPage = do
           p $ do
             "new password"
             (input ! type_ "text" ! name "new-pass")
+          input !
+            type_ "hidden" !
+            name "next" !
+            value "http://localhost:3000/after-login"
           input ! type_ "submit" ! value "Submit"
 
 getEmailResetPassSendEmailPage :: Handler Html
