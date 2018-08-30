@@ -260,6 +260,26 @@ Goat Guardian provides an endpoint that lets the end-user logout.  The flow for 
    the `next` parameter.  Since the end-user has been logged out, Goat Guardian
    will not set the `X-UserId` HTTP header.
 
+#### Proxy
+
+Goat Guardian will proxy all other URLs to the upstream web application.
+
+Goat Guardian will add a header `X-UserId` with a value of an integer.  This
+value can be used to identify and distinguish end-users.
+
+Goat Guardian will add other headers depending on how the end-user logged in.
+
+If the end-user logged in with Twitter, Goat Guardian will add the following headers:
+
+- `X-Twitter-Token`: this is the end-user's Twitter token.  It can be used to make requests to Twitter on the end-user's behalf.
+- `X-Twitter-Secret`: the end-user's Twitter secret.  This is used with the Twitter token.
+- `X-Twitter-UserId`: the ID of the end-user on Twitter.
+- `X-Twitter-Screen-Name`: the screen name of the end-user on Twitter.
+
+If the end-user logged in with email, Goat Guardian will add the following headers:
+
+- `X-Email`: the email address of the end-user.
+
 ## Options
 
 This section lists all the options that can be specified to Goat Guardian.
