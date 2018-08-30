@@ -205,7 +205,6 @@ data TwitterLoginErr
   | TwitterLoginNoNextParam
   | TwitterLoginNotConfirmed
 
-
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
 handleTwitterLogin req = do
   $(logDebug) $ "handleTwitterLogin, started..."
@@ -286,6 +285,11 @@ handleTwitterLogin req = do
       pure $ WPRResponse resp
     Right resp -> pure resp
 
+data TwitterCallbackErr
+  = TwitterCallbackAccessTokensNotFound
+  | TwitterCallbackNoParams
+  | TwitterCallbackTempTokenNotInDb
+
 handleTwitterCallback :: Request -> Tona WaiProxyResponse
 handleTwitterCallback req = do
   $(logDebug) $ "handleTwitterCallback, req: " <> tshow req
@@ -298,11 +302,74 @@ handleTwitterCallback req = do
           }
   manager <- readerShared httpManager
   let maybeParams = do
+        reqNext <- join $ lookup "next" (queryString req)
         reqToken <- join $ lookup "oauth_token" (queryString req)
         reqVerifier <- join $ lookup "oauth_verifier" (queryString req)
-        pure (reqToken, reqVerifier)
-  case maybeParams of
-    Nothing -> do
+        pure (reqNext, reqToken, reqVerifier)
+  eitherResp <-
+    runExceptT $ do
+      (next, reqToken, reqVerifier) <-
+        fromMaybeM (throwError TwitterCallbackNoParams) maybeParams
+      maybeTempToken <-
+        lift $ TonaDb.run $
+          selectFirst
+            [TwitterTemporaryTokenToken ==. decodeUtf8With lenientDecode reqToken]
+            []
+      (Entity _ (TwitterTemporaryToken dbToken dbSecret)) <-
+        fromMaybeM (throwError TwitterCallbackTempTokenNotInDb) maybeTempToken
+      let cred =
+            Credential
+              [ ("oauth_token", encodeUtf8 dbToken)
+              , ("oauth_token_secret", encodeUtf8 dbSecret)
+              , ("oauth_verifier", reqVerifier)
+              ]
+      Credential accessTokens <- getAccessToken oauth cred manager
+      $(logDebug) $ "handleTwitterCallback, accessTokens: " <> tshow accessTokens
+      let maybeAccessTokens = do
+            token <- lookup "oauth_token" accessTokens
+            secret <- lookup "oauth_token_secret" accessTokens
+            userId <- lookup "user_id" accessTokens
+            screenName <- lookup "screen_name" accessTokens
+            pure (token, secret, userId, screenName)
+      (token, secret, twitterUserId, screenName) <-
+        fromMaybeM
+          (throwError TwitterCallbackAccessTokensNotFound)
+          maybeAccessTokens
+      let tokenText = decodeUtf8With lenientDecode token
+          secretText = decodeUtf8With lenientDecode secret
+          twitterUserIdText = decodeUtf8With lenientDecode twitterUserId
+          screenNameText = decodeUtf8With lenientDecode screenName
+      userId <-
+        lift $ TonaDb.run $ do
+          maybeTwitterUser <- getBy $ UniqueUserId twitterUserIdText
+          case maybeTwitterUser of
+            -- This is the first time the twitter user has logged in.
+            Nothing -> do
+              time <- liftIO getCurrentTime
+              userKey <- insert $ User time
+              insert_ $
+                TwitterUser tokenText secretText twitterUserIdText screenNameText userKey
+              pure userKey
+            -- The user has already logged in before and their information exists in the database.
+            Just (Entity _ TwitterUser{twitterUserUserId}) ->
+              -- TODO: Should the user's oauth_token and oauth_token_secret be updated in the database?
+              pure twitterUserUserId
+      rawCookie <- lift $ createCookie userId
+      let resp =
+            responseLBS
+              status302
+              [(hLocation, next), (hSetCookie, rawCookie)]
+              mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left TwitterCallbackAccessTokensNotFound -> do
+      let resp =
+            responseLBS
+              status404
+              []
+              "<p>in twitter callback, access tokens not found in getAccessToken call</p>"
+      pure $ WPRResponse resp
+    Left TwitterCallbackNoParams -> do
       let deniedParam = join $ lookup "denied" (queryString req)
       case deniedParam of
         Nothing -> do
@@ -310,7 +377,7 @@ handleTwitterCallback req = do
                 responseLBS
                   status500
                   []
-                  "<p>callback response from twitter didn't have oauth_token or oauth_verifier or denied</p>"
+                  "<p>callback response from twitter didn't have (next and oauth_token and oauth_verifier) or denied</p>"
           pure $ WPRResponse resp
         Just _ -> do
           let resp =
@@ -319,72 +386,14 @@ handleTwitterCallback req = do
                   []
                   "<p>call response from twitter was denied</p>"
           pure $ WPRResponse resp
-    Just (reqToken, reqVerifier) -> do
-      maybeTempToken <-
-        TonaDb.run $
-          selectFirst
-            [TwitterTemporaryTokenToken ==. decodeUtf8With lenientDecode reqToken]
-            []
-      case maybeTempToken of
-        Nothing -> do
-          let resp =
-                responseLBS
-                  status404
-                  []
-                  "<p>in twitter callback, tempory token for user not found in database</p>"
-          pure $ WPRResponse resp
-        Just (Entity _ (TwitterTemporaryToken dbToken dbSecret)) -> do
-          let cred =
-                Credential
-                  [ ("oauth_token", encodeUtf8 dbToken)
-                  , ("oauth_token_secret", encodeUtf8 dbSecret)
-                  , ("oauth_verifier", reqVerifier)
-                  ]
-          Credential accessTokens <- getAccessToken oauth cred manager
-          $(logDebug) $ "handleTwitterCallback, accessTokens: " <> tshow accessTokens
-          let maybeAccessTokens = do
-                token <- lookup "oauth_token" accessTokens
-                secret <- lookup "oauth_token_secret" accessTokens
-                userId <- lookup "user_id" accessTokens
-                screenName <- lookup "screen_name" accessTokens
-                pure (token, secret, userId, screenName)
-          case maybeAccessTokens of
-            Nothing -> do
-              let resp =
-                    responseLBS
-                      status404
-                      []
-                      "<p>in twitter callback, access tokens not found in getAccessToken call</p>"
-              pure $ WPRResponse resp
-            Just (token, secret, twitterUserId, screenName) -> do
-              let tokenText = decodeUtf8With lenientDecode token
-                  secretText = decodeUtf8With lenientDecode secret
-                  twitterUserIdText = decodeUtf8With lenientDecode twitterUserId
-                  screenNameText = decodeUtf8With lenientDecode screenName
-              userId <-
-                TonaDb.run $ do
-                  maybeTwitterUser <- getBy $ UniqueUserId twitterUserIdText
-                  case maybeTwitterUser of
-                    -- This is the first time the twitter user has logged in.
-                    Nothing -> do
-                      time <- liftIO getCurrentTime
-                      userKey <- insert $ User time
-                      insert_ $
-                        TwitterUser tokenText secretText twitterUserIdText screenNameText userKey
-                      pure userKey
-                    -- The user has already logged in before and their information exists in the database.
-                    Just (Entity _ TwitterUser{twitterUserUserId}) ->
-                      -- TODO: Should the user's oauth_token and oauth_token_secret be updated in the database?
-                      pure twitterUserUserId
-              rawCookie <- createCookie userId
-              url <- readerConf redirAfterLoginUrl
-              let byteStringUrl = encodeUtf8 url
-                  resp =
-                    responseLBS
-                      status302
-                      [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
-                      mempty
-              pure $ WPRResponse resp
+    Left TwitterCallbackNoParams -> do
+      let resp =
+            responseLBS
+              status404
+              []
+              "<p>in twitter callback, tempory token for user not found in database</p>"
+      pure $ WPRResponse resp
+    Right resp -> pure resp
 
 createCookie :: Key User -> Tona ByteString
 createCookie userKey = do
