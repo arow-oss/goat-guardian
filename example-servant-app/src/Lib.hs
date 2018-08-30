@@ -97,7 +97,7 @@ getHomePage maybeUserId = do
             maybe "(not logged in)" (toMarkup . unUserId) maybeUserId
         h3 $ "Log In?"
         p $
-          a ! href "http://localhost:3000/twitter/login" $ "login with twitter"
+          a ! href "http://localhost:3000/twitter/login?next=http%3A%2F%2Flocalhost%3A3000%2Fafter-login" $ "login with twitter"
         hr
         p $
           a ! href "http://localhost:3000/email-login-page" $ "login with email"
@@ -177,6 +177,10 @@ getEmailLoginPage = do
           p $ do
             "password"
             (input ! type_ "text" ! name "password")
+          input !
+            type_ "hidden" !
+            name "next" !
+            value "http://localhost:3000/after-login"
           input ! type_ "submit" ! value "Submit"
 
 getEmailRegisterPage :: Handler Html
@@ -209,6 +213,10 @@ getEmailChangePassPage = do
           p $ do
             "new password"
             (input ! type_ "text" ! name "new-pass")
+          input !
+            type_ "hidden" !
+            name "next" !
+            value "http://localhost:3000/after-login"
           input ! type_ "submit" ! value "Submit"
 
 getEmailResetPassSendEmailPage :: Handler Html

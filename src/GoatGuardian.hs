@@ -15,7 +15,7 @@ import Control.Monad.Except (ExceptT(ExceptT), runExceptT, throwError)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask)
 import Control.Monad.Trans.Class (lift)
-import Control.FromSum (fromMaybeM)
+import Control.FromSum (fromEitherM, fromMaybeM)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Base64 as Base64
 import Data.ByteString.Lazy (toStrict)
@@ -141,24 +141,17 @@ data Config = Config
   { tonaDb :: TonaDb.Config
   , twitterConfig :: TwitterConfig
   , rawSessionKey :: RawSessionKey
-  , redirAfterLoginUrl :: Text
   }
   deriving (Show)
 
 instance FromEnv Config where
   fromEnv =
-    let redirAfterLogin =
-          envDef
-            ( envVar "GG_REDIR_AFTER_LOGIN_URL" .||
-              argLong "redir-after-login-url"
-            )
-            "http://localhost:3000"
-        db =
+    let db =
           fromEnvWithRenames
             defParserRenames
               { envVarRenames = [("DB_CONN_STRING", "GG_DB_CONN_STRING")]
               }
-    in Config <$> db <*> fromEnv <*> fromEnv <*> redirAfterLogin
+    in Config <$> db <*> fromEnv <*> fromEnv
 
 instance TonaDb.HasConfig Config where
   config = tonaDb
@@ -191,15 +184,15 @@ data GenerateSessionKey = GenerateSessionKey
 
 defaultMain :: IO ()
 defaultMain = do
-  CmdLineOpts{genSessKey} <- parseCmdLineOpts
-  case genSessKey of
-    Just _ -> do
+  maybeOpts <- parseCmdLineOpts
+  case maybeOpts of
+    Just (CmdLineOpts (Just _)) -> do
       putStrLn "Generating a new session key that can be used with Goat Guardian."
       putStrLn "Please set this key in the GG_SESSION_KEY environment variable and"
       putStrLn "rerun Goat Guardian:\n"
       (key, _) <- randomKey
       Text.putStrLn $ decodeUtf8With lenientDecode $ Base64.encode key
-    Nothing ->
+    _ ->
       Tona.run $ do
         TonaDb.runMigrate migrateAll
         (conf, shared) <- ask
@@ -207,66 +200,96 @@ defaultMain = do
         $(logDebug) $ "Running Goat Guardian on port " <> tshow port <> "..."
         liftIO . run port . logStdoutDev $ app conf shared
 
+data TwitterLoginErr
+  = TwitterLoginHttpEx
+  | TwitterLoginMissingCreds
+  | TwitterLoginNoNextParam
+  | TwitterLoginNotConfirmed
+
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
-handleTwitterLogin _req = do
+handleTwitterLogin req = do
   $(logDebug) $ "handleTwitterLogin, started..."
   twitConf <- readerConf twitterConfig
-  let tokens =
-        twitterOAuth
-          { oauthConsumerKey = twitterOAuthKey twitConf
-          , oauthConsumerSecret = twitterOAuthSecret twitConf
-          , oauthCallback = Just $ twitterOAuthCallbackUrl twitConf
-          }
+  let maybeNext = join $ lookup "next" $ queryString req
   manager <- readerShared httpManager
-  $(logDebug) $ "handleTwitterLogin, about to run getTemporaryCredential..."
-  eitherCred <- try $ getTemporaryCredential tokens manager
-  $(logDebug) $ "handleTwitterLogin, eitherCred: " <> tshow eitherCred
-  case eitherCred of
-    Left (_err :: HttpException) -> do
+  eitherResp <-
+    runExceptT $ do
+      next <- fromMaybeM (throwError TwitterLoginNoNextParam) maybeNext
+      let callbackUrl = twitterOAuthCallbackUrl twitConf <> "?next=" <> urlEncode True next
+      let tokens =
+            twitterOAuth
+              { oauthConsumerKey = twitterOAuthKey twitConf
+              , oauthConsumerSecret = twitterOAuthSecret twitConf
+              , oauthCallback = Just callbackUrl
+              }
+      $(logDebug) $ "handleTwitterLogin, callbackUrl: " <> tshow callbackUrl
+      $(logDebug) $ "handleTwitterLogin, about to run getTemporaryCredential..."
+      eitherCred <- try $ getTemporaryCredential tokens manager :: ExceptT e Tona (Either HttpException Credential)
+      $(logDebug) $ "handleTwitterLogin, eitherCred: " <> tshow eitherCred
+      Credential creds <- fromEitherM (const $ throwError TwitterLoginHttpEx) eitherCred
+      let maybeCredRes = do
+            confirmed <- lookup "oauth_callback_confirmed" creds
+            token <- lookup "oauth_token" creds
+            secret <- lookup "oauth_token_secret" creds
+            pure (confirmed, token, secret)
+      credRes <- fromMaybeM (throwError TwitterLoginMissingCreds) maybeCredRes
+      (token, secret) <-
+        case credRes of
+          ("true", token, secret) -> pure (token, secret)
+          _ -> throwError TwitterLoginNotConfirmed
+      $(logDebug) "handleTwitterLogin, successfully looked up values"
+      -- TODO: It might be possible just to encrypt these values
+      -- and return them to the user in a cookie that we can read
+      -- later.
+      lift $
+        TonaDb.run $ do
+          let textToken = decodeUtf8With lenientDecode token
+              textSecret = decodeUtf8With lenientDecode secret
+          deleteWhere [TwitterTemporaryTokenToken ==. textToken]
+          insert_ (TwitterTemporaryToken textToken textSecret)
+      let url = authorizeUrl tokens (Credential creds)
+      let bytestringUrl = encodeUtf8 $ pack url
+      $(logDebug) $ "handleTwitterLogin, url: " <> tshow url
+      let resp = responseLBS status302 [(hLocation, bytestringUrl)] mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left TwitterLoginHttpEx -> do
       let resp =
             responseLBS
               status500
               []
               "<p>could not access Twitter to get temporary credentials</p>"
       pure $ WPRResponse resp
-    Right (Credential creds) -> do
-      let maybeCredRes = do
-            confirmed <- lookup "oauth_callback_confirmed" creds
-            token <- lookup "oauth_token" creds
-            secret <- lookup "oauth_token_secret" creds
-            pure (confirmed, token, secret)
-      case maybeCredRes of
-        Nothing -> do
-          $(logDebug) "handleTwitterLogin, couldn't find values"
-          let resp =
-                responseLBS
-                  status500
-                  []
-                  "<p>could not find Twitter oauth_* values in temporary credential call</p>"
-          pure $ WPRResponse resp
-        Just ("true", token, secret) -> do
-          $(logDebug) "handleTwitterLogin, successfully looked up values"
-          -- TODO: It might be possible just to encrypt these values
-          -- and return them to the user in a cookie that we can read
-          -- later.
-          TonaDb.run $ do
-            let textToken = decodeUtf8With lenientDecode token
-                textSecret = decodeUtf8With lenientDecode secret
-            deleteWhere [TwitterTemporaryTokenToken ==. textToken]
-            insert_ (TwitterTemporaryToken textToken textSecret)
-          let url = authorizeUrl tokens (Credential creds)
-          let bytestringUrl = encodeUtf8 $ pack url
-          $(logDebug) $ "handleTwitterLogin, url: " <> tshow url
-          let resp = responseLBS status302 [(hLocation, bytestringUrl)] mempty
-          pure $ WPRResponse resp
-        _ -> do
-          $(logDebug) "handleTwitterLogin, response from twitter didn't have oauth_callback_confirmed"
-          let resp =
-                responseLBS
-                  status500
-                  []
-                  "<p>response from twitter didn't have oauth_callback_confirmed set to true</p>"
-          pure $ WPRResponse resp
+    Left TwitterLoginMissingCreds -> do
+      $(logDebug) "handleTwitterLogin, couldn't find values"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>could not find Twitter oauth_* values in temporary credential call</p>"
+      pure $ WPRResponse resp
+    Left TwitterLoginNotConfirmed -> do
+      $(logDebug) "handleTwitterLogin, response from twitter didn't have oauth_callback_confirmed"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>response from twitter didn't have oauth_callback_confirmed set to true</p>"
+      pure $ WPRResponse resp
+    Left TwitterLoginNoNextParam -> do
+      $(logDebug) "handleTwitterLogin, no next parameter found in the query string"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>no next parameter found in the query string</p>"
+      pure $ WPRResponse resp
+    Right resp -> pure resp
+
+data TwitterCallbackErr
+  = TwitterCallbackAccessTokensNotFound
+  | TwitterCallbackNoParams
+  | TwitterCallbackTempTokenNotInDb
 
 handleTwitterCallback :: Request -> Tona WaiProxyResponse
 handleTwitterCallback req = do
@@ -280,11 +303,74 @@ handleTwitterCallback req = do
           }
   manager <- readerShared httpManager
   let maybeParams = do
+        reqNext <- join $ lookup "next" (queryString req)
         reqToken <- join $ lookup "oauth_token" (queryString req)
         reqVerifier <- join $ lookup "oauth_verifier" (queryString req)
-        pure (reqToken, reqVerifier)
-  case maybeParams of
-    Nothing -> do
+        pure (reqNext, reqToken, reqVerifier)
+  eitherResp <-
+    runExceptT $ do
+      (next, reqToken, reqVerifier) <-
+        fromMaybeM (throwError TwitterCallbackNoParams) maybeParams
+      maybeTempToken <-
+        lift $ TonaDb.run $
+          selectFirst
+            [TwitterTemporaryTokenToken ==. decodeUtf8With lenientDecode reqToken]
+            []
+      (Entity _ (TwitterTemporaryToken dbToken dbSecret)) <-
+        fromMaybeM (throwError TwitterCallbackTempTokenNotInDb) maybeTempToken
+      let cred =
+            Credential
+              [ ("oauth_token", encodeUtf8 dbToken)
+              , ("oauth_token_secret", encodeUtf8 dbSecret)
+              , ("oauth_verifier", reqVerifier)
+              ]
+      Credential accessTokens <- getAccessToken oauth cred manager
+      $(logDebug) $ "handleTwitterCallback, accessTokens: " <> tshow accessTokens
+      let maybeAccessTokens = do
+            token <- lookup "oauth_token" accessTokens
+            secret <- lookup "oauth_token_secret" accessTokens
+            userId <- lookup "user_id" accessTokens
+            screenName <- lookup "screen_name" accessTokens
+            pure (token, secret, userId, screenName)
+      (token, secret, twitterUserId, screenName) <-
+        fromMaybeM
+          (throwError TwitterCallbackAccessTokensNotFound)
+          maybeAccessTokens
+      let tokenText = decodeUtf8With lenientDecode token
+          secretText = decodeUtf8With lenientDecode secret
+          twitterUserIdText = decodeUtf8With lenientDecode twitterUserId
+          screenNameText = decodeUtf8With lenientDecode screenName
+      userId <-
+        lift $ TonaDb.run $ do
+          maybeTwitterUser <- getBy $ UniqueUserId twitterUserIdText
+          case maybeTwitterUser of
+            -- This is the first time the twitter user has logged in.
+            Nothing -> do
+              time <- liftIO getCurrentTime
+              userKey <- insert $ User time
+              insert_ $
+                TwitterUser tokenText secretText twitterUserIdText screenNameText userKey
+              pure userKey
+            -- The user has already logged in before and their information exists in the database.
+            Just (Entity _ TwitterUser{twitterUserUserId}) ->
+              -- TODO: Should the user's oauth_token and oauth_token_secret be updated in the database?
+              pure twitterUserUserId
+      rawCookie <- lift $ createCookie userId
+      let resp =
+            responseLBS
+              status302
+              [(hLocation, next), (hSetCookie, rawCookie)]
+              mempty
+      pure $ WPRResponse resp
+  case eitherResp of
+    Left TwitterCallbackAccessTokensNotFound -> do
+      let resp =
+            responseLBS
+              status404
+              []
+              "<p>in twitter callback, access tokens not found in getAccessToken call</p>"
+      pure $ WPRResponse resp
+    Left TwitterCallbackNoParams -> do
       let deniedParam = join $ lookup "denied" (queryString req)
       case deniedParam of
         Nothing -> do
@@ -292,7 +378,7 @@ handleTwitterCallback req = do
                 responseLBS
                   status500
                   []
-                  "<p>callback response from twitter didn't have oauth_token or oauth_verifier or denied</p>"
+                  "<p>callback response from twitter didn't have (next and oauth_token and oauth_verifier) or denied</p>"
           pure $ WPRResponse resp
         Just _ -> do
           let resp =
@@ -301,72 +387,14 @@ handleTwitterCallback req = do
                   []
                   "<p>call response from twitter was denied</p>"
           pure $ WPRResponse resp
-    Just (reqToken, reqVerifier) -> do
-      maybeTempToken <-
-        TonaDb.run $
-          selectFirst
-            [TwitterTemporaryTokenToken ==. decodeUtf8With lenientDecode reqToken]
-            []
-      case maybeTempToken of
-        Nothing -> do
-          let resp =
-                responseLBS
-                  status404
-                  []
-                  "<p>in twitter callback, tempory token for user not found in database</p>"
-          pure $ WPRResponse resp
-        Just (Entity _ (TwitterTemporaryToken dbToken dbSecret)) -> do
-          let cred =
-                Credential
-                  [ ("oauth_token", encodeUtf8 dbToken)
-                  , ("oauth_token_secret", encodeUtf8 dbSecret)
-                  , ("oauth_verifier", reqVerifier)
-                  ]
-          Credential accessTokens <- getAccessToken oauth cred manager
-          $(logDebug) $ "handleTwitterCallback, accessTokens: " <> tshow accessTokens
-          let maybeAccessTokens = do
-                token <- lookup "oauth_token" accessTokens
-                secret <- lookup "oauth_token_secret" accessTokens
-                userId <- lookup "user_id" accessTokens
-                screenName <- lookup "screen_name" accessTokens
-                pure (token, secret, userId, screenName)
-          case maybeAccessTokens of
-            Nothing -> do
-              let resp =
-                    responseLBS
-                      status404
-                      []
-                      "<p>in twitter callback, access tokens not found in getAccessToken call</p>"
-              pure $ WPRResponse resp
-            Just (token, secret, twitterUserId, screenName) -> do
-              let tokenText = decodeUtf8With lenientDecode token
-                  secretText = decodeUtf8With lenientDecode secret
-                  twitterUserIdText = decodeUtf8With lenientDecode twitterUserId
-                  screenNameText = decodeUtf8With lenientDecode screenName
-              userId <-
-                TonaDb.run $ do
-                  maybeTwitterUser <- getBy $ UniqueUserId twitterUserIdText
-                  case maybeTwitterUser of
-                    -- This is the first time the twitter user has logged in.
-                    Nothing -> do
-                      time <- liftIO getCurrentTime
-                      userKey <- insert $ User time
-                      insert_ $
-                        TwitterUser tokenText secretText twitterUserIdText screenNameText userKey
-                      pure userKey
-                    -- The user has already logged in before and their information exists in the database.
-                    Just (Entity _ TwitterUser{twitterUserUserId}) ->
-                      -- TODO: Should the user's oauth_token and oauth_token_secret be updated in the database?
-                      pure twitterUserUserId
-              rawCookie <- createCookie userId
-              url <- readerConf redirAfterLoginUrl
-              let byteStringUrl = encodeUtf8 url
-                  resp =
-                    responseLBS
-                      status302
-                      [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
-                      mempty
-              pure $ WPRResponse resp
+    Left TwitterCallbackNoParams -> do
+      let resp =
+            responseLBS
+              status404
+              []
+              "<p>in twitter callback, tempory token for user not found in database</p>"
+      pure $ WPRResponse resp
+    Right resp -> pure resp
 
 createCookie :: Key User -> Tona ByteString
 createCookie userKey = do
@@ -589,6 +617,7 @@ data EmailLoginErr
   = EmailLoginEmailNotFoundInDb
   | EmailLoginEmailNotVerified
   | EmailLoginNoEmailParam
+  | EmailLoginNoNextParam
   | EmailLoginNoPassParam
   | EmailLoginPassIncorrect
   | EmailLoginUserNotFoundInDb
@@ -600,12 +629,14 @@ handleEmailLogin req = do
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeEmail = lookup "email" params
       maybePass = lookup "password" params
+      maybeNext = lookup "next" params
   eitherResp <-
     runExceptT $ do
       byteStringEmail <- fromMaybeM (throwError EmailLoginNoEmailParam) maybeEmail
       let email = decodeUtf8With lenientDecode byteStringEmail
       byteStringPass <- fromMaybeM (throwError EmailLoginNoPassParam) maybePass
       let pass = decodeUtf8With lenientDecode byteStringPass
+      next <- fromMaybeM (throwError EmailLoginNoNextParam) maybeNext
       maybeEmailEnt <- lift $ TonaDb.run $ getBy $ UniqueEmail email
       Entity _ Email{emailHashedPass, emailVerified, emailUserId} <-
         fromMaybeM (throwError EmailLoginEmailNotFoundInDb) maybeEmailEnt
@@ -614,12 +645,10 @@ handleEmailLogin req = do
       maybeUserEnt <- lift $ TonaDb.run $ getEntity emailUserId
       Entity userKey _ <- fromMaybeM (throwError EmailLoginUserNotFoundInDb) maybeUserEnt
       rawCookie <- lift $ createCookie userKey
-      url <- lift $ readerConf redirAfterLoginUrl
-      let byteStringUrl = encodeUtf8 url
-          resp =
+      let resp =
             responseLBS
               status302
-              [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
+              [(hLocation, next), (hSetCookie, rawCookie)]
               mempty
       pure $ WPRResponse resp
   case eitherResp of
@@ -629,6 +658,8 @@ handleEmailLogin req = do
       pure $ errResp status403 "email address not verified"
     Left EmailLoginNoEmailParam ->
       pure $ errResp status400 "email request body param not found"
+    Left EmailLoginNoNextParam ->
+      pure $ errResp status400 "next request body param not found"
     Left EmailLoginNoPassParam ->
       pure $ errResp status400 "password request body param not found"
     Left EmailLoginPassIncorrect ->
@@ -649,6 +680,7 @@ handleEmailLogin req = do
 data EmailChangePassErr
   = EmailChangePassNoCookies
   | EmailChangePassNoNewPassParam
+  | EmailChangePassNoNextParam
   | EmailChangePassNoOldPassParam
   | EmailChangePassNoSessCookie
   | EmailChangePassOldPassIncorrect
@@ -667,6 +699,7 @@ handleEmailChangePass req = do
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeOldPass = lookup "old-pass" params
       maybeNewPass = lookup "new-pass" params
+      maybeNext = lookup "next" params
   eitherResp <-
     runExceptT $ do
       cookies <- fromMaybeM (throwError EmailChangePassNoCookies) maybeCookies
@@ -680,6 +713,7 @@ handleEmailChangePass req = do
       userKey <- fromMaybeM (throwError EmailChangePassSessCookieIncorrect) maybeUserKey
       byteStringOldPass <- fromMaybeM (throwError EmailChangePassNoOldPassParam) maybeOldPass
       byteStringNewPass <- fromMaybeM (throwError EmailChangePassNoNewPassParam) maybeNewPass
+      next <- fromMaybeM (throwError EmailChangePassNoNextParam) maybeNext
       let oldPass = decodeUtf8With lenientDecode byteStringOldPass
       let newPass = decodeUtf8With lenientDecode byteStringNewPass
       maybeEmailEnt <-
@@ -692,9 +726,7 @@ handleEmailChangePass req = do
       newHashedPass <- hashPass newPass
       let newEmailEnt = emailEnt { emailHashedPass = newHashedPass }
       lift $ TonaDb.run $ repsert emailKey newEmailEnt
-      url <- lift $ readerConf redirAfterLoginUrl
-      let byteStringUrl = encodeUtf8 url
-          resp = responseLBS status302 [(hLocation, byteStringUrl)] mempty
+      let resp = responseLBS status302 [(hLocation, next)] mempty
       pure $ WPRResponse resp
   case eitherResp of
     Left EmailChangePassNoCookies ->
@@ -855,6 +887,7 @@ handleEmailResetPassToken req = do
 data EmailResetPassErr
   = EmailResetPassNoCookies
   | EmailResetPassNoNewPassParam
+  | EmailResetPassNoNextParam
   | EmailResetPassNoSessCookie
   | EmailResetPassSessCookieIncorrect
   | EmailResetPassUserDoesNotExist
@@ -869,6 +902,7 @@ handleEmailResetPass req = do
       maybeCookies = parseCookies <$> lookup hCookie oldReqHeadersWithoutUserId
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeNewPass = lookup "new-pass" params
+      maybeNext = lookup "next" params
   eitherResp <-
     runExceptT $ do
       cookies <- fromMaybeM (throwError EmailResetPassNoCookies) maybeCookies
@@ -883,6 +917,7 @@ handleEmailResetPass req = do
       byteStringNewPass <- fromMaybeM (throwError EmailResetPassNoNewPassParam) maybeNewPass
       let newPass = decodeUtf8With lenientDecode byteStringNewPass
       newHashedPass <- hashPass newPass
+      next <- fromMaybeM (throwError EmailResetPassNoNextParam) maybeNext
       ExceptT $
         TonaDb.run $ do
           maybeEmailEnt <- selectFirst [EmailUserId ==. userKey] []
@@ -892,15 +927,15 @@ handleEmailResetPass req = do
               let newEmail = email { emailHashedPass = newHashedPass }
               repsert emailKey newEmail
               pure $ Right ()
-      url <- lift $ readerConf redirAfterLoginUrl
-      let byteStringUrl = encodeUtf8 url
-          resp = responseLBS status302 [(hLocation, byteStringUrl)] mempty
+      let resp = responseLBS status302 [(hLocation, next)] mempty
       pure $ WPRResponse resp
   case eitherResp of
     Left EmailResetPassNoCookies ->
       pure $ errResp status400 "no cookies found"
     Left EmailResetPassNoNewPassParam ->
       pure $ errResp status400 "new-pass request body param not found"
+    Left EmailResetPassNoNextParam ->
+      pure $ errResp status400 "next request body param not found"
     Left EmailResetPassNoSessCookie ->
       pure $ errResp status400 "the _GG_SESSION cookie is not found"
     Left EmailResetPassSessCookieIncorrect ->
@@ -921,13 +956,22 @@ handleEmailResetPass req = do
 handleLogout :: Request -> Tona WaiProxyResponse
 handleLogout req = do
   let maybeNext = join $ lookup "next" $ queryString req
-  url <- maybe (encodeUtf8 <$> readerConf redirAfterLoginUrl) pure maybeNext
-  let resp =
-        responseLBS
-          status302
-          [(hLocation, url), (hSetCookie, deleteCookie)]
-          mempty
-  pure $ WPRResponse resp
+  case maybeNext of
+    Nothing -> do
+      $(logDebug) "handleLogout, no next parameter found in the query string"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>no next parameter found in the query string</p>"
+      pure $ WPRResponse resp
+    Just next -> do
+      let resp =
+            responseLBS
+              status302
+              [(hLocation, next), (hSetCookie, deleteCookie)]
+              mempty
+      pure $ WPRResponse resp
 
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString

@@ -70,14 +70,12 @@ genSessKeyParser = do
 options :: Parser CmdLineOpts
 options = CmdLineOpts <$> genSessKeyParser
 
-parseCmdLineOpts :: IO CmdLineOpts
+parseCmdLineOpts :: IO (Maybe CmdLineOpts)
 parseCmdLineOpts = do
-  args <- getArgs
   let parserInfo =
         info
           (options <**> helper)
           (fullDesc <> header "goat-guardian - a reverse-proxy authentication server")
-      res = execParserPure defaultPrefs parserInfo args
-  case getParseResult res of
-    Nothing -> pure $ CmdLineOpts Nothing
-    Just cmdLineOpts -> pure cmdLineOpts
+  args <- getArgs
+  let res = execParserPure defaultPrefs parserInfo args
+  pure $ getParseResult res
