@@ -148,7 +148,7 @@ instance FromEnv Config where
     let db =
           fromEnvWithRenames
             defParserRenames
-              { envVarRenames = [("TONA_DB_SQLITE_CONN_STRING", "GG_SQLITE_CONN_STRING")]
+              { envVarRenames = [("DB_CONN_STRING", "GG_SQLITE_CONN_STRING")]
               }
     in Config <$> db <*> fromEnv <*> fromEnv
 
@@ -616,6 +616,7 @@ data EmailLoginErr
   = EmailLoginEmailNotFoundInDb
   | EmailLoginEmailNotVerified
   | EmailLoginNoEmailParam
+  | EmailLoginNoNextParam
   | EmailLoginNoPassParam
   | EmailLoginPassIncorrect
   | EmailLoginUserNotFoundInDb
@@ -627,12 +628,14 @@ handleEmailLogin req = do
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeEmail = lookup "email" params
       maybePass = lookup "password" params
+      maybeNext = lookup "next" params
   eitherResp <-
     runExceptT $ do
       byteStringEmail <- fromMaybeM (throwError EmailLoginNoEmailParam) maybeEmail
       let email = decodeUtf8With lenientDecode byteStringEmail
       byteStringPass <- fromMaybeM (throwError EmailLoginNoPassParam) maybePass
       let pass = decodeUtf8With lenientDecode byteStringPass
+      next <- fromMaybeM (throwError EmailLoginNoNextParam) maybeNext
       maybeEmailEnt <- lift $ TonaDb.run $ getBy $ UniqueEmail email
       Entity _ Email{emailHashedPass, emailVerified, emailUserId} <-
         fromMaybeM (throwError EmailLoginEmailNotFoundInDb) maybeEmailEnt
@@ -641,12 +644,10 @@ handleEmailLogin req = do
       maybeUserEnt <- lift $ TonaDb.run $ getEntity emailUserId
       Entity userKey _ <- fromMaybeM (throwError EmailLoginUserNotFoundInDb) maybeUserEnt
       rawCookie <- lift $ createCookie userKey
-      url <- lift $ readerConf redirAfterLoginUrl
-      let byteStringUrl = encodeUtf8 url
-          resp =
+      let resp =
             responseLBS
               status302
-              [(hLocation, byteStringUrl), (hSetCookie, rawCookie)]
+              [(hLocation, next), (hSetCookie, rawCookie)]
               mempty
       pure $ WPRResponse resp
   case eitherResp of
@@ -656,6 +657,8 @@ handleEmailLogin req = do
       pure $ errResp status403 "email address not verified"
     Left EmailLoginNoEmailParam ->
       pure $ errResp status400 "email request body param not found"
+    Left EmailLoginNoNextParam ->
+      pure $ errResp status400 "next request body param not found"
     Left EmailLoginNoPassParam ->
       pure $ errResp status400 "password request body param not found"
     Left EmailLoginPassIncorrect ->
