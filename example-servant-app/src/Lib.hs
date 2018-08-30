@@ -97,7 +97,7 @@ getHomePage maybeUserId = do
             maybe "(not logged in)" (toMarkup . unUserId) maybeUserId
         h3 $ "Log In?"
         p $
-          a ! href "http://localhost:3000/twitter/login" $ "login with twitter"
+          a ! href "http://localhost:3000/twitter/login?next=http%3A%2F%2Flocalhost%3A3000%2Fafter-login%3Fhello%3Dtrue" $ "login with twitter"
         hr
         p $
           a ! href "http://localhost:3000/email-login-page" $ "login with email"
