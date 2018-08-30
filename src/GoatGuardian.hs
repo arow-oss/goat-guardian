@@ -202,23 +202,29 @@ defaultMain = do
 data TwitterLoginErr
   = TwitterLoginHttpEx
   | TwitterLoginMissingCreds
+  | TwitterLoginNoNextParam
   | TwitterLoginNotConfirmed
 
+
 handleTwitterLogin :: Request -> Tona WaiProxyResponse
-handleTwitterLogin _req = do
+handleTwitterLogin req = do
   $(logDebug) $ "handleTwitterLogin, started..."
   twitConf <- readerConf twitterConfig
-  let tokens =
-        twitterOAuth
-          { oauthConsumerKey = twitterOAuthKey twitConf
-          , oauthConsumerSecret = twitterOAuthSecret twitConf
-          , oauthCallback = Just $ twitterOAuthCallbackUrl twitConf
-          }
+  let maybeNext = join $ lookup "next" $ queryString req
   manager <- readerShared httpManager
   eitherResp <-
     runExceptT $ do
+      next <- fromMaybeM (throwError TwitterLoginNoNextParam) maybeNext
+      let callbackUrl = twitterOAuthCallbackUrl twitConf <> "?next=" <> urlEncode True next
+      let tokens =
+            twitterOAuth
+              { oauthConsumerKey = twitterOAuthKey twitConf
+              , oauthConsumerSecret = twitterOAuthSecret twitConf
+              , oauthCallback = Just callbackUrl
+              }
+      $(logDebug) $ "handleTwitterLogin, callbackUrl: " <> tshow callbackUrl
       $(logDebug) $ "handleTwitterLogin, about to run getTemporaryCredential..."
-      eitherCred <- try $ getTemporaryCredential tokens manager
+      eitherCred <- try $ getTemporaryCredential tokens manager :: ExceptT e Tona (Either HttpException Credential)
       $(logDebug) $ "handleTwitterLogin, eitherCred: " <> tshow eitherCred
       Credential creds <- fromEitherM (const $ throwError TwitterLoginHttpEx) eitherCred
       let maybeCredRes = do
@@ -269,6 +275,14 @@ handleTwitterLogin _req = do
               status500
               []
               "<p>response from twitter didn't have oauth_callback_confirmed set to true</p>"
+      pure $ WPRResponse resp
+    Left TwitterLoginNoNextParam -> do
+      $(logDebug) "handleTwitterLogin, no next parameter found in the query string"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>no next parameter found in the query string</p>"
       pure $ WPRResponse resp
     Right resp -> pure resp
 
