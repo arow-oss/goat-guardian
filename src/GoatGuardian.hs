@@ -886,6 +886,7 @@ handleEmailResetPassToken req = do
 data EmailResetPassErr
   = EmailResetPassNoCookies
   | EmailResetPassNoNewPassParam
+  | EmailResetPassNoNextParam
   | EmailResetPassNoSessCookie
   | EmailResetPassSessCookieIncorrect
   | EmailResetPassUserDoesNotExist
@@ -900,6 +901,7 @@ handleEmailResetPass req = do
       maybeCookies = parseCookies <$> lookup hCookie oldReqHeadersWithoutUserId
   (params, _) <- liftIO $ parseRequestBodyEx reqBodyOpts noUploadedFilesBackend req
   let maybeNewPass = lookup "new-pass" params
+      maybeNext = lookup "next" params
   eitherResp <-
     runExceptT $ do
       cookies <- fromMaybeM (throwError EmailResetPassNoCookies) maybeCookies
@@ -914,6 +916,7 @@ handleEmailResetPass req = do
       byteStringNewPass <- fromMaybeM (throwError EmailResetPassNoNewPassParam) maybeNewPass
       let newPass = decodeUtf8With lenientDecode byteStringNewPass
       newHashedPass <- hashPass newPass
+      next <- fromMaybeM (throwError EmailResetPassNoNextParam) maybeNext
       ExceptT $
         TonaDb.run $ do
           maybeEmailEnt <- selectFirst [EmailUserId ==. userKey] []
@@ -923,15 +926,15 @@ handleEmailResetPass req = do
               let newEmail = email { emailHashedPass = newHashedPass }
               repsert emailKey newEmail
               pure $ Right ()
-      url <- lift $ readerConf redirAfterLoginUrl
-      let byteStringUrl = encodeUtf8 url
-          resp = responseLBS status302 [(hLocation, byteStringUrl)] mempty
+      let resp = responseLBS status302 [(hLocation, next)] mempty
       pure $ WPRResponse resp
   case eitherResp of
     Left EmailResetPassNoCookies ->
       pure $ errResp status400 "no cookies found"
     Left EmailResetPassNoNewPassParam ->
       pure $ errResp status400 "new-pass request body param not found"
+    Left EmailResetPassNoNextParam ->
+      pure $ errResp status400 "next request body param not found"
     Left EmailResetPassNoSessCookie ->
       pure $ errResp status400 "the _GG_SESSION cookie is not found"
     Left EmailResetPassSessCookieIncorrect ->
@@ -952,13 +955,22 @@ handleEmailResetPass req = do
 handleLogout :: Request -> Tona WaiProxyResponse
 handleLogout req = do
   let maybeNext = join $ lookup "next" $ queryString req
-  url <- maybe (encodeUtf8 <$> readerConf redirAfterLoginUrl) pure maybeNext
-  let resp =
-        responseLBS
-          status302
-          [(hLocation, url), (hSetCookie, deleteCookie)]
-          mempty
-  pure $ WPRResponse resp
+  case maybeNext of
+    Nothing -> do
+      $(logDebug) "handleLogout, no next parameter found in the query string"
+      let resp =
+            responseLBS
+              status500
+              []
+              "<p>no next parameter found in the query string</p>"
+      pure $ WPRResponse resp
+    Just next -> do
+      let resp =
+            responseLBS
+              status302
+              [(hLocation, next), (hSetCookie, deleteCookie)]
+              mempty
+      pure $ WPRResponse resp
 
 toStrictByteString :: Builder -> ByteString
 toStrictByteString = toStrict . toLazyByteString
