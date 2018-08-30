@@ -468,6 +468,12 @@ handleProxy req = do
           $(logDebug) $ "handleProxy, newReq: " <> tshow newReq
           pure $ WPRModifiedRequest newReq (ProxyDest "localhost" 8000)
         Just userKey -> do
+          (maybeEmail, maybeTwitterUser) <-
+            lift $
+              TonaDb.run $ do
+                maybeEmail <- selectFirst [EmailUserId ==. userKey] []
+                maybeTwitterUser <- selectFirst [TwitterUserUserId ==. userKey] []
+                pure (maybeEmail, maybeTwitterUser)
           let withoutSessionCookie =
                 filter (\(name, _) -> name /= "_GG_SESSION") cookies
               oldReqHeadersWithoutCookie =
@@ -482,8 +488,32 @@ handleProxy req = do
                       , toStrictByteString (renderCookies withoutSessionCookie)
                       )
                     ]
+              emailHeader =
+                case maybeEmail of
+                  Nothing -> []
+                  Just (Entity _ Email {emailEmail}) ->
+                    [("X-Email", encodeUtf8 emailEmail)]
+              twitterHeader =
+                case maybeTwitterUser of
+                  Nothing -> []
+                  Just (Entity _ twitterUser) ->
+                    [ ( "X-Twitter-Token"
+                      , encodeUtf8 $ twitterUserToken twitterUser
+                      )
+                    , ( "X-Twitter-Secret"
+                      , encodeUtf8 $ twitterUserSecret twitterUser
+                      )
+                    , ( "X-Twitter-UserId"
+                        , encodeUtf8 $ twitterUserTwitterUserId twitterUser
+                      )
+                    , ( "X-Twitter-Screen-Name"
+                        , encodeUtf8 $ twitterUserScreenName twitterUser
+                      )
+                    ]
               newHeaders =
                 [("X-UserId", userKeyToByteString userKey)] <>
+                emailHeader <>
+                twitterHeader <>
                 newCookieHeader <>
                 oldReqHeadersWithoutCookie
               newReq = req { requestHeaders = newHeaders }
