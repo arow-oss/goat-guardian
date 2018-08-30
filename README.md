@@ -302,11 +302,6 @@ The following are just a small taste.  You can find many more features on the
       requests to `/v2/*` are directed to a new web application, while all other
       requests are handled by the legacy web application.
 
-- Make Goat Guardian completely programmable, by providing it as a Haskell
-  library (instead of only as a standalone executable).  Eventually we also
-  want to provide access to it as a C library, so that it can be programmed
-  from any programming language, including Python, Ruby, Java, etc.
-
 ## Related Software
 
 There are a few existing programs that have a similar feature set to Goat
@@ -334,8 +329,6 @@ Here are some differences with Goat Guardian:
   figure out exactly how login-with operates.  If you find the documentation
   for Goat Guardian lacking in any regard, please open an issue or send a PR.
 
-- login-with can't be used programmatically in Haskell, Python, Ruby, Java, etc.
-
 ### oauth2_proxy
 
 [oauth2_proxy](https://github.com/bitly/oauth2_proxy) is very similar to Goat
@@ -350,8 +343,6 @@ Here are some differences with Goat Guardian.
 
 - oauth2_proxy only allows you to use one OAuth provider at a time.  Goat
   Guardian allows you to use any that have been configured.
-
-- oauth2_proxy can't be used programmatically in Haskell, Python, Ruby, Java, etc.
 
 - oauth2_proxy doesn't have any way to reverse-proxy endpoints if the end-user
   hasn't already loggedin.  Goat Guardian lets the upstream application decide
