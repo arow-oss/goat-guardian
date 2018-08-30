@@ -41,7 +41,8 @@ import Network.Wai.Middleware.RequestLogger (logStdoutDev)
 import Network.Wai.Parse
 import Text.Email.Validate (isValid)
 import Text.Read (readMaybe)
-import TonaParser (FromEnv(..), (.||), argLong, defParserRenames, env, envDef, envVar, envVarRenames, fromEnvWithRenames)
+import TonaParser (FromEnv(..), ParserRenames(ParserRenames, envVarRenames), (.||), argLong, defParserRenames, env, envDef, envVar, fromEnvWithRenames)
+-- import TonaParser (FromEnv(..), (.||), argLong, defParserRenames, env, envDef, envVar, envVarRenames, fromEnvWithRenames)
 import Tonatona (Plug(..), TonaM, readerConf, readerShared)
 import qualified Tonatona as Tona
 import qualified Tonatona.Db.Sqlite as TonaDb
@@ -148,7 +149,7 @@ instance FromEnv Config where
     let db =
           fromEnvWithRenames
             defParserRenames
-              { envVarRenames = [("DB_CONN_STRING", "GG_SQLITE_CONN_STRING")]
+              { envVarRenames = [("DB_CONN_STRING", "GG_DB_CONN_STRING")]
               }
     in Config <$> db <*> fromEnv <*> fromEnv
 
