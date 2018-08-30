@@ -118,18 +118,21 @@ The login flow with twitter is as follows:
 1. Direct the end-user to `/twitter/login` on Goat Guardian.  (By default, this
    will be http://localhost:3000/twitter/login.)
 
+   You will also need to specify a `next` URL query parameter with the URL to
+   redirect the end-user to after they have finished authenticating on Twitter.
+   `next` could be something like `http://localhost:3000/after-login`.
+
 1. Goat Guardian will redirect the end-user to twitter.com to login.
 
 1. When the user logins in with Twitter, they will be redirected back to
    `/twitter/callback` on Goat Guardian.  Goat Guardian will create a user ID
    in its database, and create a session cookie for the end-user.
 
-1. Goat Guardian will redirect the end-user to `/after-login` (unless it has
-   been changed by a command line option).
+1. Goat Guardian will redirect the end-user to `next` query parameter specified
+   above.
 
-1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
-   add the `X-UserId` header and reverse-proxy the request to the upstream web
-   app.
+1. Upon receiving the redirected request, Goat Guardian will add the `X-UserId`
+   header and reverse-proxy the request to the upstream web app.
 
 The command options and environment variables that affect Twitter OAuth are
 listed in a following section.
@@ -156,15 +159,16 @@ The flow for registering a new email address is described below:
    for their email adress and a password to use for Goat Guardian.
 
    It must set the `action` of the form to `POST` and the action to
-   `/email/register` for Goat Guardian.  It must have two inputs, with the name
-   `email` and `password`.
+   `/email/register` for Goat Guardian.  It must have three inputs, with the name
+   `email`, `password`, and `next`.  `next` is the URL to redirect the end-user to
+   after registering. `next` could be something like `http://localhost:3000/email-login-page`.
 
 1. When the end-user submits this form, Goat Guardian will intercept this
    request and send an email to the end-user asking them to confirm their email
    address.
 
 1. When the end-user confirms their email address, they will be redirected to
-   `/`.  They are now able to login.
+   the `next` parameter from above.  They are now able to login.
 
 #### Login with an email address that has already been registered
 
@@ -175,15 +179,16 @@ and confirmed is described below:
    for their email adress and a password:
 
    It must set the `action` of the form to `POST` and the action to
-   `/email/login` for Goat Guardian.  It must have two inputs, with the name
-   `email` and `password`.
+   `/email/login` for Goat Guardian.  It must have three inputs, with the name
+   `email`, `password`, and `next`. `next` is the URL to redirect the end-user to
+   after logging in. `next` could be something like `http://localhost:3000/after-login`.
 
 1. When the end-user submis this form, Goat Guardian will intercep this request
    and check the end-user's email and password.  If it is correct, Goat Guardian will
-   set a session cookie and redirect the end-user to `/after-login` (unless it has
-   been changed by a command line option).
+   set a session cookie and redirect the end-user to the URL specified in the
+   `next` parameter above.
 
-1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
+1. Upon receiving the redirected request, Goat Guardian will
    add the `X-UserId` header and reverse-proxy the request to the upstream web
    app.
 
@@ -195,15 +200,16 @@ The flow for changing the password for the end-user if the current password is k
    for their current password and the new password to use.
 
    It must set the `action` of the form to `POST` and the action to
-   `/email/change-password` for Goat Guardian.  It must have two inputs, with the name
-   `old-pass` and `new-pass`.
+   `/email/change-password` for Goat Guardian.  It must have three inputs, with the name
+   `old-pass`, `new-pass`, and `next`. `next` is the URL to redirect the end-user to
+   after registering.
 
 1. When the end-user submis this form, Goat Guardian will intercep this request
    and check the end-user's current password.  If it is correct, Goat Guardian will
-   change the password and redirect the end-user to `/after-login` (unless it has
-   been changed by a command line option).
+   change the password and redirect the end-user to the URL specified in the
+   `next` parameter above.
 
-1. Upon receiving the redirected request to `/after-login`, Goat Guardian will
+1. Upon receiving the redirected request, Goat Guardian will
    add the `X-UserId` header and reverse-proxy the request to the upstream web
    app.
 
@@ -265,7 +271,6 @@ Command Line Flag | Environment Variable | Default | Description
 `--twitter-oauth-secret` | `GG_TWITTER_OAUTH_SECRET` | *(no default)* | The OAuth secret to use for Twitter.  This should be a value like `HCZPPaOmib64GP7QbQaEwrLwKswK8pQDe4UwsAS3EVJBupBj5l`.  You'll need to register with Twitter to get this value.
 `--db-conn-string` | `GG_DB_CONN_STRING` | `:memory:` | The connection string to use for the SQLite database used to store the end-user accounts.  By default it just uses an in-memory database which is deleted when Goat Guardian stops running.  You should probably specify this as something like `/some/path/to/my-db.sqlite3` to save the end-user accounts to a file on disk.
 `--session-key` | `GG_SESSION_KEY` | *(no default)* | The encryption key used to encrypt/decrypt the session cookie sent to the end-user.  This can be generated by running `goat-guardian --generate-session-key`.
-`--redir-after-login-url` | `GG_REDIR_AFTER_LOGIN_URL` | `http://localhost:3000` | The URL to redirect the end-user to after logging in with Goat Guardian.
 
 ## Example App
 
