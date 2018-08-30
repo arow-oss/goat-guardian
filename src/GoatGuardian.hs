@@ -183,15 +183,15 @@ data GenerateSessionKey = GenerateSessionKey
 
 defaultMain :: IO ()
 defaultMain = do
-  CmdLineOpts{genSessKey} <- parseCmdLineOpts
-  case genSessKey of
-    Just _ -> do
+  maybeOpts <- parseCmdLineOpts
+  case maybeOpts of
+    Just (CmdLineOpts (Just _)) -> do
       putStrLn "Generating a new session key that can be used with Goat Guardian."
       putStrLn "Please set this key in the GG_SESSION_KEY environment variable and"
       putStrLn "rerun Goat Guardian:\n"
       (key, _) <- randomKey
       Text.putStrLn $ decodeUtf8With lenientDecode $ Base64.encode key
-    Nothing ->
+    _ ->
       Tona.run $ do
         TonaDb.runMigrate migrateAll
         (conf, shared) <- ask

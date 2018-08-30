@@ -8,7 +8,8 @@ import qualified Data.ByteString as ByteString
 import qualified Data.ByteString.Base64 as Base64
 import Data.Semigroup (Semigroup, (<>))
 import Data.String (IsString)
-import Options.Applicative (Parser, (<**>), execParser, fullDesc, header, help, helper, info, long, short, switch)
+import Options.Applicative (Parser, (<**>), defaultPrefs, execParserPure, fullDesc, getParseResult, header, help, helper, info, long, short, switch)
+import System.Environment (getArgs)
 import TonaParser (FromEnv(..), (.||), argLong, env, envVar)
 import Web.ClientSession (Key, initKey)
 
@@ -69,9 +70,12 @@ genSessKeyParser = do
 options :: Parser CmdLineOpts
 options = CmdLineOpts <$> genSessKeyParser
 
-parseCmdLineOpts :: IO CmdLineOpts
-parseCmdLineOpts =
-  execParser $
-    info
-      (options <**> helper)
-      (fullDesc <> header "goat-guardian - a reverse-proxy authentication server")
+parseCmdLineOpts :: IO (Maybe CmdLineOpts)
+parseCmdLineOpts = do
+  let parserInfo =
+        info
+          (options <**> helper)
+          (fullDesc <> header "goat-guardian - a reverse-proxy authentication server")
+  args <- getArgs
+  let res = execParserPure defaultPrefs parserInfo args
+  pure $ getParseResult res
